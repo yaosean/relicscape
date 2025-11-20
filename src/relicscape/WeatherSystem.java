@@ -17,22 +17,29 @@ public class WeatherSystem {
      * Occasionally draw a weather particle on this tile.
      */
     public void drawWeather(Graphics2D g2, TileType biomeBase, int px, int py, int tileSize) {
-        if (rand.nextInt(120) != 0) {
-            return; // sparse particles
+        // Increase density a bit (lower number = more particles)
+        if (rand.nextInt(80) != 0) {
+            return;
         }
+
+        char[] forestParticles = {'*', '·', '❂'};
+        char[] desertParticles = {'.', '˙', '∙'};
+        char[] ruinParticles   = {'.', '•', '⋱'};
 
         char particle;
         Color pc;
+
         if (biomeBase == TileType.GRASS) {
-            particle = '*';
-            pc = new Color(230, 240, 255, 180); // snowflake
+            particle = forestParticles[rand.nextInt(forestParticles.length)];
+            pc = new Color(230, 240, 255, 180); // soft glowing pollen / fireflies
         } else if (biomeBase == TileType.SAND) {
-            particle = '.';
-            pc = new Color(240, 220, 150, 180); // dust
-        } else { // ruins
-            particle = '.';
-            pc = new Color(200, 200, 230, 150); // motes
+            particle = desertParticles[rand.nextInt(desertParticles.length)];
+            pc = new Color(240, 220, 150, 160); // dust
+        } else {
+            particle = ruinParticles[rand.nextInt(ruinParticles.length)];
+            pc = new Color(200, 200, 230, 160); // ash/motes
         }
+
         g2.setColor(pc);
         int xOff = px + 2 + rand.nextInt(Math.max(1, tileSize - 4));
         int yOff = py - 6 + rand.nextInt(Math.max(1, tileSize - 4));
