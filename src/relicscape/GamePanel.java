@@ -3,6 +3,7 @@ package relicscape;
 import javax.swing.JPanel;
 import javax.swing.Timer;
 import java.awt.*;
+import java.awt.image.BufferedImage;
 import java.awt.event.KeyEvent;
 import java.awt.event.KeyListener;
 import java.util.Random;
@@ -42,6 +43,9 @@ public class GamePanel extends JPanel implements KeyListener {
     private final EncounterSystem encounterSystem;
     private final WeatherSystem weatherSystem;
     private final Random rand = new Random();
+    private final TextureManager textureManager;
+    private final MapManager mapManager;
+    private final java.awt.image.BufferedImage playerSprite;
 
     private String  lastMessage =
             "Explore the world. Find 3 relic fragments and return to the central shrine.";
@@ -49,6 +53,7 @@ public class GamePanel extends JPanel implements KeyListener {
     private boolean gameWon  = false;
 
     private final Timer timer;
+    private static final boolean TESTING_MODE = true; // when true: ignore obstacles and give infinite health
 
     // ===================== CONSTRUCTOR ===================
 
@@ -66,8 +71,31 @@ public class GamePanel extends JPanel implements KeyListener {
         generator.generate(world, relicManager, rand);
 
         player          = new Player(world.getWidth() / 2, world.getHeight() / 2, 10);
+        if (TESTING_MODE) {
+            player.setHp(Integer.MAX_VALUE / 2);
+            player.setInvulnerable(true);
+        }
         encounterSystem = new EncounterSystem(rand);
         weatherSystem   = new WeatherSystem(rand);
+        textureManager = new TextureManager();
+        mapManager = new MapManager(textureManager);
+        // If a map is present, build the invisible walkability grid aligned to the world tiles
+        if (mapManager != null && mapManager.hasMap()) {
+            mapManager.buildWalkableGrid(world.getWidth(), world.getHeight(), TILE_SIZE, 110);
+        }
+
+        java.awt.image.BufferedImage rawPlayer = textureManager.getRawImage("TX Player.png");
+        if (rawPlayer == null) rawPlayer = textureManager.getRawImage("tx player.png");
+        if (rawPlayer != null) {
+            java.awt.image.BufferedImage scaled = new java.awt.image.BufferedImage(TILE_SIZE, TILE_SIZE, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+            Graphics2D g = scaled.createGraphics();
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.drawImage(rawPlayer, 0, 0, TILE_SIZE, TILE_SIZE, null);
+            g.dispose();
+            playerSprite = scaled;
+        } else {
+            playerSprite = null;
+        }
 
         timer = new Timer(FRAME_DELAY_MS, e -> repaint());
         timer.start();
@@ -132,9 +160,19 @@ public class GamePanel extends JPanel implements KeyListener {
         }
 
         TileType tile = world.getTile(newX, newY);
-        if (!isWalkable(tile)) {
-            lastMessage = "You can't move through that.";
-            return;
+        // Testing mode: ignore obstacles and allow free movement
+        if (!TESTING_MODE) {
+            if (mapManager != null && mapManager.hasMap()) {
+                if (!mapManager.isWalkableTile(newX, newY)) {
+                    lastMessage = "You can't move through that.";
+                    return;
+                }
+            } else {
+                if (!isWalkable(tile)) {
+                    lastMessage = "You can't move through that.";
+                    return;
+                }
+            }
         }
 
         player.setPosition(newX, newY);
@@ -214,22 +252,66 @@ public class GamePanel extends JPanel implements KeyListener {
 
         g2.setFont(new Font("Consolas", Font.PLAIN, 16));
 
-        // --- World tiles ---
-        for (int y = 0; y < VIEW_HEIGHT; y++) {
-            int worldY = viewTop + y;
-            if (worldY < 0 || worldY >= world.getHeight()) continue;
+        // --- World tiles or map artwork ---
+        if (mapManager != null && mapManager.hasMap()) {
+            // Draw base artwork stretched to the view rectangle
+            mapManager.drawBase(g2, viewLeft, viewTop, VIEW_WIDTH, VIEW_HEIGHT, TILE_SIZE, WORLD_TOP_MARGIN);
 
-            for (int x = 0; x < VIEW_WIDTH; x++) {
-                int worldX = viewLeft + x;
-                if (worldX < 0 || worldX >= world.getWidth()) continue;
+            // Compute player's screen Y for occlusion splitting
+            int playerScreenY = WORLD_TOP_MARGIN + (player.getY() - viewTop) * TILE_SIZE + TILE_SIZE / 2;
 
-                TileType tile = world.getTile(worldX, worldY);
-                boolean isPlayerHere = (worldX == player.getX() && worldY == player.getY());
+            // Draw overlay pixels that are "behind" the player (top part)
+            mapManager.drawOverlayPortion(g2, viewLeft, viewTop, VIEW_WIDTH, VIEW_HEIGHT, TILE_SIZE, WORLD_TOP_MARGIN, playerScreenY, true);
 
-                int px = x * TILE_SIZE;
-                int py = WORLD_TOP_MARGIN + y * TILE_SIZE;
+            // Draw player (sprite if available)
+            int playerPx = (player.getX() - viewLeft) * TILE_SIZE;
+            int playerPy = WORLD_TOP_MARGIN + (player.getY() - viewTop) * TILE_SIZE;
+            if (playerSprite != null) {
+                g2.drawImage(playerSprite, playerPx, playerPy, null);
+            } else {
+                g2.setColor(new Color(255, 255, 255));
+                g2.setFont(new Font("Consolas", Font.BOLD, 16));
+                g2.drawString("@", playerPx + 4, playerPy + TILE_SIZE - 4);
+            }
 
-                drawTile(g2, tile, px, py, isPlayerHere, worldX, worldY);
+            // Draw relics / shrine icons so they are visible (may get occluded by overlay bottom)
+            for (int y = 0; y < VIEW_HEIGHT; y++) {
+                int worldY = viewTop + y;
+                if (worldY < 0 || worldY >= world.getHeight()) continue;
+                for (int x = 0; x < VIEW_WIDTH; x++) {
+                    int worldX = viewLeft + x;
+                    if (worldX < 0 || worldX >= world.getWidth()) continue;
+                    TileType tile = world.getTile(worldX, worldY);
+                    if (tile == TileType.RELIC || tile == TileType.SHRINE) {
+                        int px = x * TILE_SIZE;
+                        int py = WORLD_TOP_MARGIN + y * TILE_SIZE;
+                        char glyph = tile == TileType.RELIC ? '✶' : '⌘';
+                        Color fg = tile == TileType.RELIC ? new Color(255, 235, 140) : new Color(190, 230, 255);
+                        g2.setColor(fg);
+                        g2.drawString(String.valueOf(glyph), px + 4, py + TILE_SIZE - 4);
+                    }
+                }
+            }
+
+            // Draw overlay bottom part to occlude player where appropriate
+            mapManager.drawOverlayPortion(g2, viewLeft, viewTop, VIEW_WIDTH, VIEW_HEIGHT, TILE_SIZE, WORLD_TOP_MARGIN, playerScreenY, false);
+        } else {
+            for (int y = 0; y < VIEW_HEIGHT; y++) {
+                int worldY = viewTop + y;
+                if (worldY < 0 || worldY >= world.getHeight()) continue;
+
+                for (int x = 0; x < VIEW_WIDTH; x++) {
+                    int worldX = viewLeft + x;
+                    if (worldX < 0 || worldX >= world.getWidth()) continue;
+
+                    TileType tile = world.getTile(worldX, worldY);
+                    boolean isPlayerHere = (worldX == player.getX() && worldY == player.getY());
+
+                    int px = x * TILE_SIZE;
+                    int py = WORLD_TOP_MARGIN + y * TILE_SIZE;
+
+                    drawTile(g2, tile, px, py, isPlayerHere, worldX, worldY);
+                }
             }
         }
 
@@ -285,11 +367,16 @@ public class GamePanel extends JPanel implements KeyListener {
     private void drawTile(Graphics2D g2, TileType tile, int px, int py,
                           boolean isPlayerHere, int worldX, int worldY) {
 
-        // Background
+        // Background (color fallback or texture if available)
         TileType biomeBase = world.baseForRow(worldY);
         Color bg = computeBiomeBackground(biomeBase, worldY);
-        g2.setColor(bg);
-        g2.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+        BufferedImage bgTex = textureManager.getTextureFor(biomeBase, TILE_SIZE);
+        if (bgTex != null) {
+            g2.drawImage(bgTex, px, py, null);
+        } else {
+            g2.setColor(bg);
+            g2.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+        }
 
         // Shadow under tall tiles
         if (!isPlayerHere &&
@@ -301,7 +388,7 @@ public class GamePanel extends JPanel implements KeyListener {
         char glyph = ' ';
         Color fg   = Color.WHITE;
 
-        // Iconic glyphs for objects. Ground tiles are blank.
+        // Iconic glyphs for objects. Ground tiles are blank; prefer textures if present.
         switch (tile) {
             case GRASS:
             case SAND:
@@ -365,11 +452,31 @@ public class GamePanel extends JPanel implements KeyListener {
             fg = new Color(255, 255, 255);
         }
 
-        // Draw glyph if not blank
-        if (glyph != ' ') {
-            g2.setColor(fg);
-            int baselineY = py + TILE_SIZE - 4;
-            g2.drawString(String.valueOf(glyph), px + 4, baselineY);
+        // If a texture exists for this tile, draw it instead of a glyph
+        BufferedImage objTex = textureManager.getTextureFor(tile, TILE_SIZE);
+        if (objTex != null && !isPlayerHere) {
+            int yOff = 0;
+            if (tile == TileType.TREE || tile == TileType.CACTUS || tile == TileType.RUIN_WALL) {
+                yOff = -TILE_SIZE / 3; // lift tall objects a bit
+            }
+            g2.drawImage(objTex, px, py + yOff, null);
+        } else {
+            // Draw glyph if not blank
+            if (isPlayerHere) {
+                if (playerSprite != null) {
+                    g2.drawImage(playerSprite, px, py, null);
+                } else if (glyph != ' ') {
+                    g2.setColor(fg);
+                    int baselineY = py + TILE_SIZE - 4;
+                    g2.drawString(String.valueOf(glyph), px + 4, baselineY);
+                }
+            } else {
+                if (glyph != ' ') {
+                    g2.setColor(fg);
+                    int baselineY = py + TILE_SIZE - 4;
+                    g2.drawString(String.valueOf(glyph), px + 4, baselineY);
+                }
+            }
         }
 
         // Weather disabled for clarity (uncomment later if you want movement)

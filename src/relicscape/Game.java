@@ -2,9 +2,7 @@ package relicscape;
 
 import javax.swing.SwingUtilities;
 
-/**
- * Entry point for Relicscape.
- */
+//Entry point for Relicscape.
 public class Game {
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {

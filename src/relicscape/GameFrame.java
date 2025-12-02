@@ -2,9 +2,8 @@ package relicscape;
 
 import javax.swing.JFrame;
 
-/**
- * Top-level window for Relicscape.
- */
+//Top-level window for Relicscape.
+
 public class GameFrame extends JFrame {
 
     public GameFrame() {

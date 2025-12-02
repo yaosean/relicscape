@@ -8,12 +8,15 @@ public class Player {
     private int y;
     private int hp;
     boolean pendingQuit = false; // used for ESC double-tap quit
+    private boolean invulnerable = false;
 
     public Player(int x, int y, int startingHp) {
         this.x = x;
         this.y = y;
         this.hp = startingHp;
     }
+
+    public void setInvulnerable(boolean inv) { this.invulnerable = inv; }
 
     public int getX() { return x; }
     public int getY() { return y; }
@@ -31,6 +34,7 @@ public class Player {
     public int getHp() { return hp; }
 
     public void decreaseHp(int amount) {
+        if (invulnerable) return;
         this.hp = Math.max(0, this.hp - amount);
     }
 
