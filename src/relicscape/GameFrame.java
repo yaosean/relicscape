@@ -1,5 +1,6 @@
 package relicscape;
 
+import java.awt.Frame;
 import javax.swing.JFrame;
 
 //Top-level window for Relicscape.
@@ -15,5 +16,7 @@ public class GameFrame extends JFrame {
         setContentPane(panel);
         pack();
         setLocationRelativeTo(null); // center on screen
+        setState(Frame.NORMAL); // ensure not minimized
+        toFront(); // bring to front
     }
 }

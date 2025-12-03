@@ -2,6 +2,9 @@ package relicscape;
 
 import java.awt.*;
 import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.IOException;
+import javax.imageio.ImageIO;
 
 /**
  * Loads a single map artwork and optional mask, splits it into base and overlay
@@ -23,14 +26,40 @@ public class MapManager {
 
     public MapManager(TextureManager tex) {
         this.art = tex.getRawImage("map_art.png");
-        this.mask = tex.getRawImage("map_mask.png");
+        BufferedImage loadedMask = tex.getRawImage("map_mask.png");
 
         if (art == null) {
-            widthPx = 0; heightPx = 0; baseLayer = null; overlayLayer = null; return;
+            widthPx = 0; heightPx = 0; baseLayer = null; overlayLayer = null; this.mask = null; return;
         }
 
         widthPx = art.getWidth();
         heightPx = art.getHeight();
+
+        // Generate mask if missing
+        if (loadedMask == null) {
+            this.mask = new BufferedImage(widthPx, heightPx, BufferedImage.TYPE_INT_RGB);
+            for (int y = 0; y < heightPx; y++) {
+                for (int x = 0; x < widthPx; x++) {
+                    int argb = art.getRGB(x, y);
+                    int r = (argb >> 16) & 0xff;
+                    int g = (argb >> 8) & 0xff;
+                    int b = argb & 0xff;
+                    int brightness = (r + g + b) / 3;
+                    int color = brightness > 110 ? 0xFFFFFF : 0x000000; // white = walkable, black = blocked
+                    this.mask.setRGB(x, y, color);
+                }
+            }
+            // Save the generated mask
+            try {
+                File maskFile = new File("Texture/map_mask.png");
+                maskFile.getParentFile().mkdirs();
+                ImageIO.write(this.mask, "png", maskFile);
+            } catch (IOException e) {
+                // Ignore
+            }
+        } else {
+            this.mask = loadedMask;
+        }
 
         // Build overlay by selecting darker pixels (likely walls/objects)
         overlayLayer = new BufferedImage(widthPx, heightPx, BufferedImage.TYPE_INT_ARGB);
@@ -159,17 +188,32 @@ public class MapManager {
 
     /**
      * Draw the base (under) layer portion for the view window.
+     * Uses the precomputed `baseLayer` which respects the mask (white = walkable),
+     * so only ground / castle floor pixels are drawn here. The mask is authoritative
+     * (black pixels = barriers/walls/trees, white = walkable).
      */
-    public void drawBase(Graphics2D g2, int viewLeft, int viewTop, int viewWidth, int viewHeight,
+    public void drawBase(Graphics2D g2, float viewLeft, float viewTop, int viewWidth, int viewHeight,
                          int tileSize, int topMargin) {
-        if (art == null) return;
-        // target rectangle in pixels where full map is mapped to world size
+        if (art == null || baseLayer == null) return;
+        // target rectangle in pixels
         int dx1 = 0;
         int dy1 = topMargin;
         int dx2 = viewWidth * tileSize;
         int dy2 = topMargin + viewHeight * tileSize;
 
-        g2.drawImage(art, dx1, dy1, dx2, dy2, 0, 0, widthPx, heightPx, null);
+        // source rectangle from baseLayer (aligned with art)
+        int sx1 = (int) (viewLeft * tileSize);
+        int sy1 = (int) (viewTop * tileSize);
+        int sx2 = (int) ((viewLeft + viewWidth) * tileSize);
+        int sy2 = (int) ((viewTop + viewHeight) * tileSize);
+
+        // clamp to image size
+        if (sx1 < 0) sx1 = 0;
+        if (sy1 < 0) sy1 = 0;
+        if (sx2 > widthPx) sx2 = widthPx;
+        if (sy2 > heightPx) sy2 = heightPx;
+
+        g2.drawImage(baseLayer, dx1, dy1, dx2, dy2, sx1, sy1, sx2, sy2, null);
     }
 
     /**
@@ -177,15 +221,26 @@ public class MapManager {
      * pixels with screen Y < playerScreenY (back overlay), then later the remaining overlay pixels
      * will be drawn after the player to occlude them.
      */
-    public void drawOverlayPortion(Graphics2D g2, int viewLeft, int viewTop, int viewWidth, int viewHeight,
+    public void drawOverlayPortion(Graphics2D g2, float viewLeft, float viewTop, int viewWidth, int viewHeight,
                                    int tileSize, int topMargin, int playerScreenY, boolean drawTopPart) {
         if (art == null) return;
 
-        // draw scaled overlay to view and then clip to top/bottom depending on drawTopPart
+        // draw scaled overlay portion to view and then clip to top/bottom depending on drawTopPart
         int dx1 = 0;
         int dy1 = topMargin;
         int dx2 = viewWidth * tileSize;
         int dy2 = topMargin + viewHeight * tileSize;
+
+        int sx1 = (int) (viewLeft * tileSize);
+        int sy1 = (int) (viewTop * tileSize);
+        int sx2 = (int) ((viewLeft + viewWidth) * tileSize);
+        int sy2 = (int) ((viewTop + viewHeight) * tileSize);
+
+        // clamp
+        if (sx1 < 0) sx1 = 0;
+        if (sy1 < 0) sy1 = 0;
+        if (sx2 > widthPx) sx2 = widthPx;
+        if (sy2 > heightPx) sy2 = heightPx;
 
         // create a clip region: for top part draw area from dy1..playerScreenY-1, for bottom part draw playerScreenY..dy2
         Shape prevClip = g2.getClip();
@@ -195,7 +250,7 @@ public class MapManager {
             g2.setClip(0, playerScreenY, viewWidth * tileSize, dy2 - playerScreenY);
         }
 
-        g2.drawImage(overlayLayer, dx1, dy1, dx2, dy2, 0, 0, widthPx, heightPx, null);
+        g2.drawImage(overlayLayer, dx1, dy1, dx2, dy2, sx1, sy1, sx2, sy2, null);
         g2.setClip(prevClip);
     }
 }

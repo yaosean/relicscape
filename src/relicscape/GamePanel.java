@@ -1,12 +1,12 @@
 package relicscape;
 
-import javax.swing.JPanel;
-import javax.swing.Timer;
 import java.awt.*;
-import java.awt.image.BufferedImage;
 import java.awt.event.KeyEvent;
 import java.awt.event.KeyListener;
+import java.awt.image.BufferedImage;
 import java.util.Random;
+import javax.swing.JPanel;
+import javax.swing.Timer;
 
 /**
  * GamePanel:
@@ -53,7 +53,8 @@ public class GamePanel extends JPanel implements KeyListener {
     private boolean gameWon  = false;
 
     private final Timer timer;
-    private static final boolean TESTING_MODE = true; // when true: ignore obstacles and give infinite health
+    private static final boolean TESTING_MODE = false; // when true: ignore obstacles and give infinite health
+    private boolean[] keysPressed = new boolean[256];
 
     // ===================== CONSTRUCTOR ===================
 
@@ -70,7 +71,7 @@ public class GamePanel extends JPanel implements KeyListener {
         WorldGenerator generator = new WorldGenerator();
         generator.generate(world, relicManager, rand);
 
-        player          = new Player(world.getWidth() / 2, world.getHeight() / 2, 10);
+        player          = new Player(world.getWidth() / 2.0f, world.getHeight() / 2.0f, 10);
         if (TESTING_MODE) {
             player.setHp(Integer.MAX_VALUE / 2);
             player.setInvulnerable(true);
@@ -97,7 +98,45 @@ public class GamePanel extends JPanel implements KeyListener {
             playerSprite = null;
         }
 
-        timer = new Timer(FRAME_DELAY_MS, e -> repaint());
+        timer = new Timer(FRAME_DELAY_MS, e -> {
+            // Continuous movement
+            float speed = 0.1f;
+            float dx = 0, dy = 0;
+            if (keysPressed[KeyEvent.VK_W] || keysPressed[KeyEvent.VK_UP]) dy -= speed;
+            if (keysPressed[KeyEvent.VK_S] || keysPressed[KeyEvent.VK_DOWN]) dy += speed;
+            if (keysPressed[KeyEvent.VK_A] || keysPressed[KeyEvent.VK_LEFT]) dx -= speed;
+            if (keysPressed[KeyEvent.VK_D] || keysPressed[KeyEvent.VK_RIGHT]) dx += speed;
+
+            if (dx != 0 || dy != 0) {
+                float newX = player.getFloatX() + dx;
+                float newY = player.getFloatY() + dy;
+
+                if (world.inBounds((int)newX, (int)newY)) {
+                    TileType tile = world.getTile((int)newX, (int)newY);
+                    if (TESTING_MODE || isWalkable(tile)) {
+                        int oldTileX = (int) player.getFloatX();
+                        int oldTileY = (int) player.getFloatY();
+                        player.setPosition(newX, newY);
+
+                        // Check if entered new tile
+                        if ((int)newX != oldTileX || (int)newY != oldTileY) {
+                            resolveTile(tile);
+                            String encounterMsg = encounterSystem.maybeEncounter(tile, player);
+                            if (encounterMsg != null) {
+                                lastMessage = encounterMsg;
+                                if (player.getHp() <= 0) {
+                                    gameOver = true;
+                                }
+                            }
+                            if (!gameOver) {
+                                checkWinCondition();
+                            }
+                        }
+                    }
+                }
+            }
+            repaint();
+        });
         timer.start();
     }
 
@@ -107,25 +146,15 @@ public class GamePanel extends JPanel implements KeyListener {
     public void keyPressed(KeyEvent e) {
         if (gameOver || gameWon) return;
 
-        switch (e.getKeyCode()) {
-            case KeyEvent.VK_W:
-            case KeyEvent.VK_UP:
-                tryMove(0, -1);
-                break;
-            case KeyEvent.VK_S:
-            case KeyEvent.VK_DOWN:
-                tryMove(0, 1);
-                break;
-            case KeyEvent.VK_A:
-            case KeyEvent.VK_LEFT:
-                tryMove(-1, 0);
-                break;
-            case KeyEvent.VK_D:
-            case KeyEvent.VK_RIGHT:
-                tryMove(1, 0);
-                break;
+        int code = e.getKeyCode();
+        keysPressed[code] = true;
+
+        switch (code) {
             case KeyEvent.VK_H:
-                lastMessage = "WASD / arrows to move. Find 3 relics (✶) and return to the shrine (⌘).";
+                lastMessage = "WASD / arrows to move. E to interact. Find 3 relics (✶) and return to the shrine (⌘).";
+                break;
+            case KeyEvent.VK_E:
+                interact();
                 break;
             case KeyEvent.VK_ESCAPE:
                 lastMessage = "Press ESC again to quit.";
@@ -143,27 +172,29 @@ public class GamePanel extends JPanel implements KeyListener {
     }
 
     @Override
-    public void keyReleased(KeyEvent e) { }
+    public void keyReleased(KeyEvent e) {
+        keysPressed[e.getKeyCode()] = false;
+    }
 
     @Override
     public void keyTyped(KeyEvent e) { }
 
     // ===================== GAME LOGIC ====================
 
-    private void tryMove(int dx, int dy) {
-        int newX = player.getX() + dx;
-        int newY = player.getY() + dy;
+    private void tryMove(float dx, float dy) {
+        float newX = player.getFloatX() + dx;
+        float newY = player.getFloatY() + dy;
 
-        if (!world.inBounds(newX, newY)) {
+        if (!world.inBounds((int)newX, (int)newY)) {
             lastMessage = "You feel the edge of the world.";
             return;
         }
 
-        TileType tile = world.getTile(newX, newY);
+        TileType tile = world.getTile((int)newX, (int)newY);
         // Testing mode: ignore obstacles and allow free movement
         if (!TESTING_MODE) {
             if (mapManager != null && mapManager.hasMap()) {
-                if (!mapManager.isWalkableTile(newX, newY)) {
+                if (!mapManager.isWalkableTile((int)newX, (int)newY)) {
                     lastMessage = "You can't move through that.";
                     return;
                 }
@@ -175,7 +206,7 @@ public class GamePanel extends JPanel implements KeyListener {
             }
         }
 
-        player.setPosition(newX, newY);
+        player.setTarget(newX, newY);
         resolveTile(tile);
 
         String encounterMsg = encounterSystem.maybeEncounter(tile, player);
@@ -197,6 +228,8 @@ public class GamePanel extends JPanel implements KeyListener {
             case ROCK:
             case CACTUS:
             case RUIN_WALL:
+            case RELIC:
+            case SHRINE:
                 return false;
             default:
                 return true;
@@ -229,6 +262,36 @@ public class GamePanel extends JPanel implements KeyListener {
         // Overlay is drawn in paintComponent when gameWon is true.
     }
 
+    private void interact() {
+        int px = (int) player.getFloatX();
+        int py = (int) player.getFloatY();
+        int[] dx = {-1, 0, 1, 0};
+        int[] dy = {0, -1, 0, 1};
+        for (int i = 0; i < 4; i++) {
+            int nx = px + dx[i];
+            int ny = py + dy[i];
+            if (world.inBounds(nx, ny)) {
+                TileType tile = world.getTile(nx, ny);
+                if (tile == TileType.RELIC) {
+                    relicManager.collectRelic();
+                    world.setTile(nx, ny, world.baseForRow(ny));
+                    lastMessage = "You collected a relic fragment! (" +
+                            relicManager.getRelicsCollected() + "/" + relicManager.getRelicsToCollect() + ")";
+                    return;
+                } else if (tile == TileType.SHRINE) {
+                    if (relicManager.hasAllRelics()) {
+                        gameWon = true;
+                        lastMessage = "Light erupts from the shrine as the land begins to heal.";
+                    } else {
+                        lastMessage = "The shrine hums softly. It needs more relics.";
+                    }
+                    return;
+                }
+            }
+        }
+        lastMessage = "Nothing to interact with here.";
+    }
+
     // ===================== RENDERING =====================
 
     @Override
@@ -240,8 +303,8 @@ public class GamePanel extends JPanel implements KeyListener {
                             RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 
         // Camera centered on player, clamped to world
-        int viewLeft = player.getX() - VIEW_WIDTH / 2;
-        int viewTop  = player.getY() - VIEW_HEIGHT / 2;
+        float viewLeft = player.getFloatX() - VIEW_WIDTH / 2.0f;
+        float viewTop  = player.getFloatY() - VIEW_HEIGHT / 2.0f;
 
         if (viewLeft < 0) viewLeft = 0;
         if (viewTop  < 0) viewTop  = 0;
@@ -258,28 +321,17 @@ public class GamePanel extends JPanel implements KeyListener {
             mapManager.drawBase(g2, viewLeft, viewTop, VIEW_WIDTH, VIEW_HEIGHT, TILE_SIZE, WORLD_TOP_MARGIN);
 
             // Compute player's screen Y for occlusion splitting
-            int playerScreenY = WORLD_TOP_MARGIN + (player.getY() - viewTop) * TILE_SIZE + TILE_SIZE / 2;
+            int playerScreenY = WORLD_TOP_MARGIN + (int) ((player.getFloatY() - viewTop) * TILE_SIZE + TILE_SIZE / 2);
 
             // Draw overlay pixels that are "behind" the player (top part)
             mapManager.drawOverlayPortion(g2, viewLeft, viewTop, VIEW_WIDTH, VIEW_HEIGHT, TILE_SIZE, WORLD_TOP_MARGIN, playerScreenY, true);
 
-            // Draw player (sprite if available)
-            int playerPx = (player.getX() - viewLeft) * TILE_SIZE;
-            int playerPy = WORLD_TOP_MARGIN + (player.getY() - viewTop) * TILE_SIZE;
-            if (playerSprite != null) {
-                g2.drawImage(playerSprite, playerPx, playerPy, null);
-            } else {
-                g2.setColor(new Color(255, 255, 255));
-                g2.setFont(new Font("Consolas", Font.BOLD, 16));
-                g2.drawString("@", playerPx + 4, playerPy + TILE_SIZE - 4);
-            }
-
             // Draw relics / shrine icons so they are visible (may get occluded by overlay bottom)
             for (int y = 0; y < VIEW_HEIGHT; y++) {
-                int worldY = viewTop + y;
+                int worldY = (int) (viewTop + y);
                 if (worldY < 0 || worldY >= world.getHeight()) continue;
                 for (int x = 0; x < VIEW_WIDTH; x++) {
-                    int worldX = viewLeft + x;
+                    int worldX = (int) (viewLeft + x);
                     if (worldX < 0 || worldX >= world.getWidth()) continue;
                     TileType tile = world.getTile(worldX, worldY);
                     if (tile == TileType.RELIC || tile == TileType.SHRINE) {
@@ -295,17 +347,31 @@ public class GamePanel extends JPanel implements KeyListener {
 
             // Draw overlay bottom part to occlude player where appropriate
             mapManager.drawOverlayPortion(g2, viewLeft, viewTop, VIEW_WIDTH, VIEW_HEIGHT, TILE_SIZE, WORLD_TOP_MARGIN, playerScreenY, false);
+
+            // Draw player (sprite if available) on top of everything
+            int playerPx = (int) ((player.getFloatX() - viewLeft) * TILE_SIZE);
+            int playerPy = WORLD_TOP_MARGIN + (int) ((player.getFloatY() - viewTop) * TILE_SIZE);
+            if (playerSprite != null) {
+                g2.drawImage(playerSprite, playerPx, playerPy, null);
+            } else {
+                // Draw a visible red square for the player
+                g2.setColor(Color.RED);
+                g2.fillRect(playerPx, playerPy, TILE_SIZE, TILE_SIZE);
+                g2.setColor(Color.WHITE);
+                g2.setFont(new Font("Consolas", Font.BOLD, 16));
+                g2.drawString("@", playerPx + 4, playerPy + TILE_SIZE - 4);
+            }
         } else {
             for (int y = 0; y < VIEW_HEIGHT; y++) {
-                int worldY = viewTop + y;
+                int worldY = (int) (viewTop + y);
                 if (worldY < 0 || worldY >= world.getHeight()) continue;
 
                 for (int x = 0; x < VIEW_WIDTH; x++) {
-                    int worldX = viewLeft + x;
+                    int worldX = (int) (viewLeft + x);
                     if (worldX < 0 || worldX >= world.getWidth()) continue;
 
                     TileType tile = world.getTile(worldX, worldY);
-                    boolean isPlayerHere = (worldX == player.getX() && worldY == player.getY());
+                    boolean isPlayerHere = (worldX == (int) player.getFloatX() && worldY == (int) player.getFloatY());
 
                     int px = x * TILE_SIZE;
                     int py = WORLD_TOP_MARGIN + y * TILE_SIZE;
