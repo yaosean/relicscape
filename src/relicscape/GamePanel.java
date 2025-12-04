@@ -1,11 +1,11 @@
 package relicscape;
 
-import javax.swing.JPanel;
-import javax.swing.Timer;
 import java.awt.*;
 import java.awt.event.KeyEvent;
 import java.awt.event.KeyListener;
 import java.util.Random;
+import javax.swing.JPanel;
+import javax.swing.Timer;
 
 /**
  * GamePanel:
@@ -22,13 +22,10 @@ public class GamePanel extends JPanel implements KeyListener {
 
     // ===================== CONSTANTS =====================
 
-    private static final int WORLD_WIDTH  = 80;
-    private static final int WORLD_HEIGHT = 45;
-
-    // Tile grid
-    private static final int TILE_SIZE   = 20;
-    private static final int VIEW_WIDTH  = 40;
-    private static final int VIEW_HEIGHT = 24;
+    // Tile grid (viewport shows small portion of the map)
+    private static final int TILE_SIZE   = 32;
+    private static final int VIEW_WIDTH  = 40;   // columns visible
+    private static final int VIEW_HEIGHT = 24;   // rows visible
 
     private static final int HUD_HEIGHT      = 80;
     private static final int FRAME_DELAY_MS  = 33; // ~30 FPS
@@ -37,6 +34,7 @@ public class GamePanel extends JPanel implements KeyListener {
     // ===================== STATE =========================
 
     private final World world;
+    private TMXMapLoader tmxLoader;
     private final Player player;
     private final RelicManager relicManager;
     private final EncounterSystem encounterSystem;
@@ -59,13 +57,31 @@ public class GamePanel extends JPanel implements KeyListener {
         setFocusable(true);
         addKeyListener(this);
 
-        world        = new World(WORLD_WIDTH, WORLD_HEIGHT);
-        relicManager = new RelicManager(3);
+        // Load TMX map and keep a handle to tilesets for rendering
+        TMXMapLoader loader = new TMXMapLoader();
+        world = loader.load("images/dreams.tmx");
+        this.tmxLoader = loader;
 
-        WorldGenerator generator = new WorldGenerator();
-        generator.generate(world, relicManager, rand);
+        relicManager = new RelicManager(0); // disable relics in TMX mode
 
-        player          = new Player(world.getWidth() / 2, world.getHeight() / 2, 10);
+        // Spawn near the center on a free tile
+        int spawnX = Math.max(1, world.getWidth() / 2);
+        int spawnY = Math.max(1, world.getHeight() / 2);
+        // Find nearest non-blocked tile by expanding radius
+        boolean found = false;
+        for (int r = 0; r < Math.max(world.getWidth(), world.getHeight()); r++) {
+            for (int dy = -r; dy <= r; dy++) {
+                for (int dx = -r; dx <= r; dx++) {
+                    int cx = spawnX + dx;
+                    int cy = spawnY + dy;
+                    if (!world.inBounds(cx, cy)) continue;
+                    if (!world.isBlocked(cx, cy)) { spawnX = cx; spawnY = cy; found = true; break; }
+                }
+                if (found) break;
+            }
+            if (found) break;
+        }
+        player          = new Player(spawnX, spawnY, 10);
         encounterSystem = new EncounterSystem(rand);
         weatherSystem   = new WeatherSystem(rand);
 
@@ -131,39 +147,21 @@ public class GamePanel extends JPanel implements KeyListener {
             return;
         }
 
-        TileType tile = world.getTile(newX, newY);
-        if (!isWalkable(tile)) {
+        if (world.isBlocked(newX, newY)) {
             lastMessage = "You can't move through that.";
             return;
         }
 
         player.setPosition(newX, newY);
-        resolveTile(tile);
 
-        String encounterMsg = encounterSystem.maybeEncounter(tile, player);
-        if (encounterMsg != null) {
-            lastMessage = encounterMsg;
-            if (player.getHp() <= 0) {
-                gameOver = true;
-            }
-        }
+        // Encounters disabled in TMX mode
 
         if (!gameOver) {
             checkWinCondition();
         }
     }
 
-    private boolean isWalkable(TileType t) {
-        switch (t) {
-            case TREE:
-            case ROCK:
-            case CACTUS:
-            case RUIN_WALL:
-                return false;
-            default:
-                return true;
-        }
-    }
+    private boolean isWalkable(TileType t) { return true; }
 
     private void resolveTile(TileType tile) {
         if (tile == TileType.RELIC) {
@@ -214,7 +212,7 @@ public class GamePanel extends JPanel implements KeyListener {
 
         g2.setFont(new Font("Consolas", Font.PLAIN, 16));
 
-        // --- World tiles ---
+        // --- World tiles from TMX (all non-collision layers) ---
         for (int y = 0; y < VIEW_HEIGHT; y++) {
             int worldY = viewTop + y;
             if (worldY < 0 || worldY >= world.getHeight()) continue;
@@ -223,13 +221,13 @@ public class GamePanel extends JPanel implements KeyListener {
                 int worldX = viewLeft + x;
                 if (worldX < 0 || worldX >= world.getWidth()) continue;
 
-                TileType tile = world.getTile(worldX, worldY);
+                boolean blocked = world.isBlocked(worldX, worldY);
                 boolean isPlayerHere = (worldX == player.getX() && worldY == player.getY());
 
                 int px = x * TILE_SIZE;
                 int py = WORLD_TOP_MARGIN + y * TILE_SIZE;
 
-                drawTile(g2, tile, px, py, isPlayerHere, worldX, worldY);
+                drawTile(g2, blocked, px, py, isPlayerHere, worldX, worldY);
             }
         }
 
@@ -282,125 +280,43 @@ public class GamePanel extends JPanel implements KeyListener {
      * - Background: biome gradient
      * - Glyph: only for objects (trees, ruins, relics, etc.)
      */
-    private void drawTile(Graphics2D g2, TileType tile, int px, int py,
+    private void drawTile(Graphics2D g2, boolean blocked, int px, int py,
                           boolean isPlayerHere, int worldX, int worldY) {
 
-        // Background
-        TileType biomeBase = world.baseForRow(worldY);
-        Color bg = computeBiomeBackground(biomeBase, worldY);
+        // Fallback background
+        Color bg = new Color(20, 25, 28);
         g2.setColor(bg);
         g2.fillRect(px, py, TILE_SIZE, TILE_SIZE);
 
-        // Shadow under tall tiles
-        if (!isPlayerHere &&
-            (tile == TileType.TREE || tile == TileType.CACTUS || tile == TileType.RUIN_WALL)) {
-            g2.setColor(new Color(0, 0, 0, 120));
-            g2.fillOval(px + 2, py + TILE_SIZE - 6, TILE_SIZE - 4, 4);
+        // Draw all non-collision visual layers from bottom to top
+        if (tmxLoader != null) {
+            java.util.List<int[][]> layers = tmxLoader.getVisualLayers();
+            for (int l = 0; l < layers.size(); l++) {
+                int[][] layer = layers.get(l);
+                int gid = layer[worldY][worldX];
+                if (gid <= 0) continue;
+                java.awt.image.BufferedImage img = tmxLoader.getTileImage(gid);
+                if (img != null) {
+                    g2.drawImage(img, px, py, TILE_SIZE, TILE_SIZE, null);
+                }
+            }
         }
 
-        char glyph = ' ';
-        Color fg   = Color.WHITE;
+        // Collision invisible per request
 
-        // Iconic glyphs for objects. Ground tiles are blank.
-        switch (tile) {
-            case GRASS:
-            case SAND:
-            case RUIN_FLOOR:
-                glyph = ' '; // just color
-                break;
-
-            case TREE:
-                glyph = 'T';
-                fg = new Color(70, 220, 120);
-                break;
-
-            case ROCK:
-                glyph = '^';
-                fg = new Color(210, 210, 220);
-                break;
-
-            case FLOWER:
-                glyph = '*';
-                fg = new Color(255, 190, 215);
-                break;
-
-            case DUNE:
-                glyph = '~';
-                fg = new Color(225, 195, 145);
-                break;
-
-            case CACTUS:
-                glyph = 'I';
-                fg = new Color(90, 210, 120);
-                break;
-
-            case RUIN_WALL:
-                glyph = '#';
-                fg = new Color(200, 190, 210);
-                break;
-
-            case RUBBLE:
-                glyph = 'x';
-                fg = new Color(175, 155, 155);
-                break;
-
-            case RELIC:
-                glyph = '✶';
-                fg = new Color(255, 235, 140);
-                break;
-
-            case SHRINE:
-                glyph = '⌘';
-                fg = new Color(190, 230, 255);
-                break;
-
-            default:
-                glyph = '?';
-                fg = Color.WHITE;
-        }
-
-        // Player overrides glyph
+        // Player rectangle
         if (isPlayerHere) {
-            glyph = '@';
-            fg = new Color(255, 255, 255);
+            g2.setColor(new Color(240, 240, 255));
+            g2.fillRect(px + 4, py + 4, TILE_SIZE - 8, TILE_SIZE - 8);
         }
 
-        // Draw glyph if not blank
-        if (glyph != ' ') {
-            g2.setColor(fg);
-            int baselineY = py + TILE_SIZE - 4;
-            g2.drawString(String.valueOf(glyph), px + 4, baselineY);
-        }
-
-        // Weather disabled for clarity (uncomment later if you want movement)
-        // weatherSystem.drawWeather(g2, biomeBase, px, py, TILE_SIZE);
+        // Weather disabled for clarity
     }
 
     /**
      * Smooth gradient background per biome band.
      */
     private Color computeBiomeBackground(TileType base, int worldY) {
-        int h         = world.getHeight();
-        int forestEnd = h / 3;
-        int desertEnd = 2 * h / 3;
-
-        if (base == TileType.GRASS) {
-            float t = Util.clamp01(worldY / (float) Math.max(1, forestEnd - 1));
-            Color top    = new Color(3, 25, 10);
-            Color bottom = new Color(15, 70, 30);
-            return Util.lerpColor(top, bottom, t);
-        } else if (base == TileType.SAND) {
-            float t = Util.clamp01((worldY - forestEnd) /
-                                   (float) Math.max(1, desertEnd - forestEnd - 1));
-            Color top    = new Color(40, 35, 15);
-            Color bottom = new Color(80, 60, 25);
-            return Util.lerpColor(top, bottom, t);
-        } else { // RUINS
-            float t = Util.clamp01((worldY - desertEnd) /
-                                   (float) Math.max(1, h - desertEnd - 1));
-            Color top    = new Color(25, 20, 40);
-            Color bottom = new Color(5, 5, 15);
-            return Util.lerpColor(top, bottom, t);
-        }
+        return new Color(20, 25, 28);
     }
 }
