@@ -2,9 +2,8 @@ package relicscape;
 
 import java.util.Random;
 
-/**
- * Handles random encounters and HP loss.
- */
+//Handles random encounters and HP loss.
+ 
 public class EncounterSystem {
     private final Random rand;
 
@@ -33,7 +32,7 @@ public class EncounterSystem {
                 chance = 6;
         }
 
-        if (rand.nextInt(100) < chance) {
+         if (rand.nextInt(100) < chance) {
             player.decreaseHp(1);
             if (player.getHp() <= 0) {
                 return "A shadow from the ruins drains your last strength...";

@@ -1,8 +1,6 @@
 package relicscape;
 
-/**
- * Tracks relic collection and shrine location.
- */
+//Relic collection & tracker
 public class RelicManager {
     private int relicsToCollect;
     private int relicsCollected;
