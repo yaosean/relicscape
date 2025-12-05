@@ -1,0 +1,199 @@
+// Wordle-specific fields
+private boolean wordleActive = false;
+private boolean wordleJustEnded = false;
+private final int wordleWordLen = 5;
+private final int wordleMaxGuesses = 6;
+private String wordleTarget = "RELIC";
+private final List<String> wordleWords = new ArrayList<>();
+private final List<String> wordleGuesses = new ArrayList<>();
+private StringBuilder wordleCurrent = new StringBuilder();
+
+// Seed words (example subset)
+wordleWords.addAll(Arrays.asList(
+    "RELIC", "STONE", "SHRUB", "RUINS", "SHINE",
+    "SHARD", "CRYPT", "TEMPO", "LIGHT", "SHAPE",
+    "ABYSS", "ALTAR", "ARMOR", "BLADE", "BLOOD",
+    "BONES", "CAVES", "CHEST", "CLOAK", "CORPS",
+    "CURSE", "DWARF", "ELVEN", "FAERY", "FIEND",
+    "FLAME", "FROST", "GHOUL", "GIANT", "GOLEM",
+    "GRAVE", "MINES", "MIMIC", "MOSSY", "NECRO",
+    "NIGHT", "OGRES", "PIXIE", "QUEST", "RAVEN",
+    "SIGIL", "SKULL", "SMOKE", "SNEAK", "SPELL",
+    "SPIRE", "SWAMP", "TOMBS", "TORCH", "TRAPS",
+    "VENOM", "WARDS", "WRATH", "ZOMBI", "DRUID",
+    "GROVE", "EERIE", "CHASM", "VAULT", "CREEP", 
+    "SHLOK", "ROHAN", "SHAUN", "APCSA", "MRKIM"
+));
+
+// Start a new Wordle
+private void startWordle() {
+    wordleActive = true;
+    wordleJustEnded = false;
+    wordleGuesses.clear();
+    wordleCurrent = new StringBuilder();
+    wordleTarget = wordleWords.get(rand.nextInt(wordleWords.size())).toUpperCase();
+    lastMessage = "Wordle: guess the 5-letter word.";
+}
+
+// Handle key input when Wordle is active
+private void handleWordleKey(KeyEvent e) {
+    int code = e.getKeyCode();
+    if (code == KeyEvent.VK_ESCAPE) {
+        wordleActive = false;
+        lastMessage = "You step away from the relic.";
+        return;
+    }
+    if (code == KeyEvent.VK_BACK_SPACE) {
+        if (wordleCurrent.length() > 0) wordleCurrent.deleteCharAt(wordleCurrent.length() - 1);
+        return;
+    }
+    if (code == KeyEvent.VK_ENTER) {
+        if (wordleCurrent.length() == wordleWordLen) {
+            String guess = wordleCurrent.toString().toUpperCase();
+            wordleGuesses.add(guess);
+            wordleCurrent = new StringBuilder();
+
+            if (guess.equals(wordleTarget)) {
+                wordleActive = false;
+                wordleJustEnded = true;
+                lastMessage = "You solved the relic!";
+                return;
+            }
+            if (wordleGuesses.size() >= wordleMaxGuesses) {
+                wordleActive = false;
+                wordleJustEnded = true;
+                lastMessage = "Relic remains sealed. Word was " + wordleTarget + ".";
+                return;
+            }
+        }
+        return;
+    }
+
+    char c = e.getKeyChar();
+    if (Character.isLetter(c) && wordleCurrent.length() < wordleWordLen) {
+        wordleCurrent.append(Character.toUpperCase(c));
+    }
+}
+
+// Evaluate guess with proper letter counts (0=gray,1=yellow,2=green)
+private int[] evaluateGuess(String guess, String target) {
+    int[] result = new int[guess.length()];
+    int[] remaining = new int[26];
+    for (int i = 0; i < target.length(); i++) remaining[target.charAt(i) - 'A']++;
+    for (int i = 0; i < guess.length(); i++) {
+        char g = guess.charAt(i);
+        if (g == target.charAt(i)) { result[i] = 2; remaining[g - 'A']--; }
+    }
+    for (int i = 0; i < guess.length(); i++) {
+        if (result[i] != 0) continue;
+        char g = guess.charAt(i);
+        int idx = g - 'A';
+        if (idx >= 0 && idx < 26 && remaining[idx] > 0) { result[i] = 1; remaining[idx]--; }
+    }
+    return result;
+}
+
+// Keyboard coloring state (0=unknown,1=gray,2=yellow,3=green)
+private int[] computeKeyboardState() {
+    int[] state = new int[26];
+    for (String guess : wordleGuesses) {
+        int[] eval = evaluateGuess(guess, wordleTarget);
+        for (int i = 0; i < guess.length(); i++) {
+            char ch = guess.charAt(i);
+            int idx = ch - 'A';
+            if (idx < 0 || idx >= 26) continue;
+            int score = eval[i];
+            if (score == 2) state[idx] = 3;
+            else if (score == 1 && state[idx] < 2) state[idx] = 2;
+            else if (score == 0 && state[idx] == 0) state[idx] = 1;
+        }
+    }
+    return state;
+}
+
+// Draw on-screen keyboard under the grid
+private int drawWordleKeyboard(Graphics2D g2, int[] kbState, int startY) {
+    String[] rows = {"QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"};
+    int keyW = 32, keyH = 40, gap = 6;
+    g2.setFont(new Font("Consolas", Font.BOLD, 16));
+    for (int r = 0; r < rows.length; r++) {
+        String row = rows[r];
+        int rowWidth = row.length() * (keyW + gap) - gap;
+        int x = getWidth() / 2 - rowWidth / 2;
+        int y = startY + r * (keyH + gap);
+        for (int c = 0; c < row.length(); c++) {
+            char ch = row.charAt(c);
+            int idx = ch - 'A';
+            int state = (idx >= 0 && idx < kbState.length) ? kbState[idx] : 0;
+            Color fill = new Color(30, 30, 30);
+            if (state == 1) fill = new Color(58, 58, 60);
+            else if (state == 2) fill = new Color(181, 159, 59);
+            else if (state == 3) fill = new Color(83, 141, 78);
+            int kx = x + c * (keyW + gap);
+            g2.setColor(fill);
+            g2.fillRoundRect(kx, y, keyW, keyH, 6, 6);
+            g2.setColor(new Color(200, 200, 200));
+            g2.drawRoundRect(kx, y, keyW, keyH, 6, 6);
+            String s = String.valueOf(ch);
+            FontMetrics fm = g2.getFontMetrics();
+            int tx = kx + (keyW - fm.stringWidth(s)) / 2;
+            int ty = y + (keyH + fm.getAscent() - fm.getDescent()) / 2;
+            g2.drawString(s, tx, ty);
+        }
+    }
+    return rows.length * (keyH + gap) - gap;
+}
+
+// Draw the Wordle overlay (grid + keyboard + hint)
+private void drawWordleOverlay(Graphics2D g2) {
+    g2.setColor(new Color(0, 0, 0, 200));
+    g2.fillRect(0, 0, getWidth(), getHeight());
+
+    int boxSize = 40, margin = 8;
+    int gridWidth = wordleWordLen * (boxSize + margin) - margin;
+    int gridHeight = wordleMaxGuesses * (boxSize + margin) - margin;
+    int originX = getWidth() / 2 - gridWidth / 2;
+    int originY = getHeight() / 2 - gridHeight / 2 - 40;
+
+    g2.setFont(new Font("Consolas", Font.BOLD, 20));
+    for (int row = 0; row < wordleMaxGuesses; row++) {
+        String guess = row < wordleGuesses.size() ? wordleGuesses.get(row) : null;
+        int[] eval = (guess != null) ? evaluateGuess(guess, wordleTarget) : null;
+        for (int col = 0; col < wordleWordLen; col++) {
+            int x = originX + col * (boxSize + margin);
+            int y = originY + row * (boxSize + margin);
+            char letter = ' ';
+            Color fill = new Color(40, 40, 40);
+            if (guess != null) {
+                letter = guess.charAt(col);
+                if (eval[col] == 2) fill = new Color(83, 141, 78);
+                else if (eval[col] == 1) fill = new Color(181, 159, 59);
+                else fill = new Color(58, 58, 60);
+            } else if (row == wordleGuesses.size() && col < wordleCurrent.length()) {
+                letter = wordleCurrent.charAt(col);
+                fill = new Color(70, 70, 70);
+            }
+            g2.setColor(fill);
+            g2.fillRect(x, y, boxSize, boxSize);
+            g2.setColor(new Color(200, 200, 200));
+            g2.drawRect(x, y, boxSize, boxSize);
+            if (letter != ' ') {
+                String s = String.valueOf(letter);
+                FontMetrics fm = g2.getFontMetrics();
+                int tx = x + (boxSize - fm.stringWidth(s)) / 2;
+                int ty = y + (boxSize + fm.getAscent() - fm.getDescent()) / 2;
+                g2.drawString(s, tx, ty);
+            }
+        }
+    }
+
+    int[] keyboardState = computeKeyboardState();
+    int kbHeight = drawWordleKeyboard(g2, keyboardState, originY + gridHeight + 30);
+
+    g2.setFont(new Font("Consolas", Font.PLAIN, 16));
+    g2.setColor(Color.WHITE);
+    String hint = wordleJustEnded ? "Press U to play again, ESC to close." : "Type letters, Enter=submit, Backspace=erase, ESC=exit.";
+    int sw = g2.getFontMetrics().stringWidth(hint);
+    int hintY = originY + gridHeight + kbHeight + 60;
+    g2.drawString(hint, getWidth() / 2 - sw / 2, hintY);
+}
