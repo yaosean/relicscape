@@ -22,14 +22,15 @@ public class GamePanel extends JPanel implements KeyListener {
 
     // ===================== CONSTANTS =====================
 
-    // Tile grid (viewport shows small portion of the map)
-    private static final int TILE_SIZE   = 32;
-    private static final int VIEW_WIDTH  = 40;   // columns visible
-    private static final int VIEW_HEIGHT = 24;   // rows visible
+    // Tile grid
+    private static final int TILE_SIZE   = 96;   // desired tile size; actual may clamp based on window
 
     private static final int HUD_HEIGHT      = 80;
     private static final int FRAME_DELAY_MS  = 33; // ~30 FPS
+    private static final double CLEAR_RADIUS_TILES = 1.0; // fully visible within this radius
+    private static final double BLACK_RADIUS_TILES = 5.0; // pure black at and beyond this radius
     private static final int WORLD_TOP_MARGIN = 30;
+    private static final long CORRUPTION_DURATION_MS = 10 * 60 * 1000L; // 10 minutes to fully tint
 
     // ===================== STATE =========================
 
@@ -40,19 +41,24 @@ public class GamePanel extends JPanel implements KeyListener {
     private final EncounterSystem encounterSystem;
     private final WeatherSystem weatherSystem;
     private final Random rand = new Random();
+    private long lastMoveMs = 0L;
+    private static final long MOVE_COOLDOWN_MS = 200; // 2x slower movement
 
     private String  lastMessage =
             "Explore the world. Find 3 relic fragments and return to the central shrine.";
     private boolean gameOver = false;
     private boolean gameWon  = false;
 
+        private final long corruptionStartMs = System.currentTimeMillis();
+
+    
+
     private final Timer timer;
 
     // ===================== CONSTRUCTOR ===================
 
     public GamePanel() {
-        setPreferredSize(new Dimension(VIEW_WIDTH * TILE_SIZE,
-                                       VIEW_HEIGHT * TILE_SIZE + HUD_HEIGHT));
+        setPreferredSize(new Dimension(960, 720));
         setBackground(Color.BLACK);
         setFocusable(true);
         addKeyListener(this);
@@ -95,22 +101,35 @@ public class GamePanel extends JPanel implements KeyListener {
     public void keyPressed(KeyEvent e) {
         if (gameOver || gameWon) return;
 
+        long now = System.currentTimeMillis();
+        boolean isMoveKey = (e.getKeyCode() == KeyEvent.VK_W || e.getKeyCode() == KeyEvent.VK_UP ||
+                             e.getKeyCode() == KeyEvent.VK_S || e.getKeyCode() == KeyEvent.VK_DOWN ||
+                             e.getKeyCode() == KeyEvent.VK_A || e.getKeyCode() == KeyEvent.VK_LEFT ||
+                             e.getKeyCode() == KeyEvent.VK_D || e.getKeyCode() == KeyEvent.VK_RIGHT);
+        if (isMoveKey && (now - lastMoveMs) < MOVE_COOLDOWN_MS) {
+            return; // enforce slower movement
+        }
+
         switch (e.getKeyCode()) {
             case KeyEvent.VK_W:
             case KeyEvent.VK_UP:
                 tryMove(0, -1);
+                lastMoveMs = now;
                 break;
             case KeyEvent.VK_S:
             case KeyEvent.VK_DOWN:
                 tryMove(0, 1);
+                lastMoveMs = now;
                 break;
             case KeyEvent.VK_A:
             case KeyEvent.VK_LEFT:
                 tryMove(-1, 0);
+                lastMoveMs = now;
                 break;
             case KeyEvent.VK_D:
             case KeyEvent.VK_RIGHT:
                 tryMove(1, 0);
+                lastMoveMs = now;
                 break;
             case KeyEvent.VK_H:
                 lastMessage = "WASD / arrows to move. Find 3 relics (✶) and return to the shrine (⌘).";
@@ -139,6 +158,10 @@ public class GamePanel extends JPanel implements KeyListener {
     // ===================== GAME LOGIC ====================
 
     private void tryMove(int dx, int dy) {
+        long now = System.currentTimeMillis();
+        if (now - lastMoveMs < MOVE_COOLDOWN_MS) {
+            return;
+        }
         int newX = player.getX() + dx;
         int newY = player.getY() + dy;
 
@@ -153,6 +176,7 @@ public class GamePanel extends JPanel implements KeyListener {
         }
 
         player.setPosition(newX, newY);
+    lastMoveMs = now;
 
         // Encounters disabled in TMX mode
 
@@ -199,40 +223,56 @@ public class GamePanel extends JPanel implements KeyListener {
         g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
                             RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 
+        int availableWidth = getWidth();
+        int availableHeight = getHeight();
+
+        int hudSpace = HUD_HEIGHT;
+        int topMargin = WORLD_TOP_MARGIN;
+
+        // Keep tiles readable: clamp tile size to a reasonable band (bigger tiles)
+        int tileSize = Math.max(72, Math.min(144, TILE_SIZE));
+
+        int usableHeight = Math.max(0, availableHeight - hudSpace - topMargin);
+        int viewWidthTiles = Math.max(1, (int)Math.ceil(availableWidth / (double) tileSize));
+        int viewHeightTiles = Math.max(1, (int)Math.ceil(usableHeight / (double) tileSize));
+
         // Camera centered on player, clamped to world
-        int viewLeft = player.getX() - VIEW_WIDTH / 2;
-        int viewTop  = player.getY() - VIEW_HEIGHT / 2;
+        int viewLeft = (int)Math.round(player.getX() - (viewWidthTiles - 1) / 2.0);
+        int viewTop  = (int)Math.round(player.getY() - (viewHeightTiles - 1) / 2.0);
 
         if (viewLeft < 0) viewLeft = 0;
         if (viewTop  < 0) viewTop  = 0;
-        if (viewLeft + VIEW_WIDTH  > world.getWidth())
-            viewLeft = world.getWidth() - VIEW_WIDTH;
-        if (viewTop + VIEW_HEIGHT > world.getHeight())
-            viewTop = world.getHeight() - VIEW_HEIGHT;
-
-        g2.setFont(new Font("Consolas", Font.PLAIN, 16));
+        if (viewLeft + viewWidthTiles  > world.getWidth())
+            viewLeft = world.getWidth() - viewWidthTiles;
+        if (viewTop + viewHeightTiles > world.getHeight())
+            viewTop = world.getHeight() - viewHeightTiles;
 
         // --- World tiles from TMX (all non-collision layers) ---
-        for (int y = 0; y < VIEW_HEIGHT; y++) {
+        for (int y = 0; y < viewHeightTiles; y++) {
             int worldY = viewTop + y;
             if (worldY < 0 || worldY >= world.getHeight()) continue;
 
-            for (int x = 0; x < VIEW_WIDTH; x++) {
+            for (int x = 0; x < viewWidthTiles; x++) {
                 int worldX = viewLeft + x;
                 if (worldX < 0 || worldX >= world.getWidth()) continue;
 
                 boolean blocked = world.isBlocked(worldX, worldY);
                 boolean isPlayerHere = (worldX == player.getX() && worldY == player.getY());
 
-                int px = x * TILE_SIZE;
-                int py = WORLD_TOP_MARGIN + y * TILE_SIZE;
+                int px = x * tileSize;
+                int py = WORLD_TOP_MARGIN + y * tileSize;
 
-                drawTile(g2, blocked, px, py, isPlayerHere, worldX, worldY);
+                double corruptionStrength = computeCorruptionStrength(worldX, worldY);
+                drawTile(g2, blocked, px, py, isPlayerHere, worldX, worldY, tileSize, corruptionStrength);
+
             }
         }
 
+        // Radial fog overlay (clear radius -> black radius) centered on the player
+        drawFogOverlay(g2, tileSize, availableWidth, usableHeight, WORLD_TOP_MARGIN, viewWidthTiles, viewHeightTiles, viewLeft, viewTop);
+
         // --- HUD ---
-        drawHud(g2);
+        drawHud(g2, tileSize, viewHeightTiles);
 
         // --- Win / lose overlay ---
         if (gameOver || gameWon) {
@@ -240,8 +280,8 @@ public class GamePanel extends JPanel implements KeyListener {
         }
     }
 
-    private void drawHud(Graphics2D g2) {
-        int hudY = VIEW_HEIGHT * TILE_SIZE + 25;
+    private void drawHud(Graphics2D g2, int tileSize, int viewHeightTiles) {
+        int hudY = WORLD_TOP_MARGIN + viewHeightTiles * tileSize + 25;
 
         g2.setColor(new Color(10, 10, 10, 230));
         g2.fillRoundRect(10, hudY - 20, getWidth() - 20, 60, 15, 15);
@@ -281,12 +321,12 @@ public class GamePanel extends JPanel implements KeyListener {
      * - Glyph: only for objects (trees, ruins, relics, etc.)
      */
     private void drawTile(Graphics2D g2, boolean blocked, int px, int py,
-                          boolean isPlayerHere, int worldX, int worldY) {
+                          boolean isPlayerHere, int worldX, int worldY, int tileSize, double corruptionStrength) {
 
         // Fallback background
         Color bg = new Color(20, 25, 28);
         g2.setColor(bg);
-        g2.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+        g2.fillRect(px, py, tileSize, tileSize);
 
         // Draw all non-collision visual layers from bottom to top
         if (tmxLoader != null) {
@@ -297,9 +337,17 @@ public class GamePanel extends JPanel implements KeyListener {
                 if (gid <= 0) continue;
                 java.awt.image.BufferedImage img = tmxLoader.getTileImage(gid);
                 if (img != null) {
-                    g2.drawImage(img, px, py, TILE_SIZE, TILE_SIZE, null);
+                    g2.drawImage(img, px, py, tileSize, tileSize, null);
                 }
             }
+        }
+
+        // Corruption tint (purple) applied per tile based on corruption strength
+        if (corruptionStrength > 0.01) {
+            int alpha = (int) Math.min(230, Math.round(230 * corruptionStrength));
+            // Darker, bleaker purple tint
+            g2.setColor(new Color(80, 40, 120, alpha));
+            g2.fillRect(px, py, tileSize, tileSize);
         }
 
         // Collision invisible per request
@@ -307,10 +355,67 @@ public class GamePanel extends JPanel implements KeyListener {
         // Player rectangle
         if (isPlayerHere) {
             g2.setColor(new Color(240, 240, 255));
-            g2.fillRect(px + 4, py + 4, TILE_SIZE - 8, TILE_SIZE - 8);
+            int inset = Math.max(4, tileSize / 8);
+            g2.fillRect(px + inset, py + inset, tileSize - inset * 2, tileSize - inset * 2);
         }
 
         // Weather disabled for clarity
+    }
+
+        private void drawFogOverlay(Graphics2D g2, int tileSize, int availableWidth, int usableHeight, int topMargin,
+                                    int viewWidthTiles, int viewHeightTiles, int viewLeft, int viewTop) {
+            int viewportWidth = Math.max(availableWidth, viewWidthTiles * tileSize);
+            int viewportHeight = Math.max(usableHeight, viewHeightTiles * tileSize);
+            int centerX = (player.getX() - viewLeft) * tileSize + tileSize / 2;
+            int centerY = topMargin + (player.getY() - viewTop) * tileSize + tileSize / 2;
+
+        float radius = (float) (tileSize * BLACK_RADIUS_TILES);
+        float clearFrac = (float) (CLEAR_RADIUS_TILES / BLACK_RADIUS_TILES);
+        float midSoft = 0.50f; // slower ramp-in
+        float midFrac = 0.70f; // darker band starts later
+        float[] dist = new float[] { 0f, Math.min(0.99f, clearFrac), midSoft, midFrac, 1f };
+        Color[] cols = new Color[] {
+            new Color(0, 0, 0, 0),    // center clear
+            new Color(0, 0, 0, 0),    // clear radius
+            new Color(0, 0, 0, 90),   // softer ramp
+            new Color(0, 0, 0, 200),  // mid band dark
+            new Color(0, 0, 0, 255)   // full black
+        };
+
+        Paint old = g2.getPaint();
+        RadialGradientPaint paint = new RadialGradientPaint(new Point(centerX, centerY), radius, dist, cols);
+        g2.setPaint(paint);
+        g2.fillRect(0, topMargin, viewportWidth, viewportHeight);
+        g2.setPaint(old);
+    }
+
+    private double computeCorruptionStrength(int worldX, int worldY) {
+        long elapsed = System.currentTimeMillis() - corruptionStartMs;
+        double progress = Math.min(1.0, elapsed / (double) CORRUPTION_DURATION_MS);
+
+        // Bottom-up bias: tiles lower in the map corrupt sooner
+        double heightBias = 1.0 - (worldY / Math.max(1.0, (world.getHeight() - 1)));
+
+        // Deterministic noise per tile for organic spread
+        double noise = (hash(worldX, worldY) % 1000) / 1000.0; // 0..0.999
+        double jitter = (noise - 0.5) * 0.25; // +/-0.125
+
+        double threshold = Math.max(0.0, Math.min(1.0, heightBias + jitter));
+
+        // Soften ramp: corruption rises when progress exceeds threshold
+        double spread = 0.25; // wider spread for gradual takeover
+        double strength = (progress - threshold) / spread;
+        if (strength < 0) strength = 0;
+        if (strength > 1) strength = 1;
+        return strength;
+    }
+
+    private int hash(int x, int y) {
+        int h = x * 73428767 ^ y * 9122713;
+        h ^= (h << 13);
+        h ^= (h >>> 17);
+        h ^= (h << 5);
+        return h & 0x7fffffff;
     }
 
     /**

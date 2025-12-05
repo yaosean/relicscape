@@ -10,13 +10,14 @@ public class GameFrame extends JFrame {
     public GameFrame() {
         setTitle("Relicscape");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setResizable(false);
+        setResizable(true);
 
         GamePanel panel = new GamePanel();
         setContentPane(panel);
         pack();
-        setLocationRelativeTo(null); // center on screen
-        setState(Frame.NORMAL); // ensure not minimized
-        toFront(); // bring to front
+        setExtendedState(JFrame.MAXIMIZED_BOTH); // maximize to fill screen
+        setLocationRelativeTo(null);
+        setState(Frame.NORMAL);
+        toFront();
     }
 }
