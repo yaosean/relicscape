@@ -1,0 +1,167 @@
+// Math quiz minigame fields
+private boolean mathActive = false;
+private boolean mathJustEnded = false;
+private String mathQuestion = "";
+private String mathAnswer = "";
+private StringBuilder mathInput = new StringBuilder();
+private int mathAttempts = 0;
+private final int mathMaxAttempts = 3;
+
+// Start the math quiz
+private void startMathQuiz() {
+    mathActive = true;
+    mathJustEnded = false;
+    mathInput = new StringBuilder();
+    mathAttempts = 0;
+    generateMathProblem();
+    lastMessage = "Solve the math to unseal the relic.";
+}
+
+// Generate a multi-step arithmetic problem using +, -, *, /
+private void generateMathProblem() {
+    int a = rand.nextInt(16) + 5;  // 5-20
+    int b = rand.nextInt(16) + 5;  // 5-20
+    int c = rand.nextInt(5) + 2;   // 2-6
+    int d = rand.nextInt(10) + 3;  // 3-12
+
+    int part1 = a + b;
+    int part2 = part1 * c;
+    int part3 = Math.max(part2 - d, 1);
+
+    java.util.List<Integer> divisors = new ArrayList<>();
+    for (int i = 1; i <= Math.sqrt(part3); i++) {
+        if (part3 % i == 0) {
+            divisors.add(i);
+            int pair = part3 / i;
+            if (pair != i) divisors.add(pair);
+        }
+    }
+    if (divisors.isEmpty()) divisors.add(1);
+    int e = divisors.get(rand.nextInt(divisors.size()));
+
+    int answer = part3 / e;
+    mathQuestion = "((" + a + " + " + b + ") * " + c + " - " + d + ") / " + e + " = ?";
+    mathAnswer = String.valueOf(answer);
+}
+
+// Handle key input when math quiz is active
+private void handleMathKey(KeyEvent e) {
+    int code = e.getKeyCode();
+    if (code == KeyEvent.VK_ESCAPE) {
+        mathActive = false;
+        lastMessage = "You step away from the arcane seal.";
+        return;
+    }
+    if (code == KeyEvent.VK_BACK_SPACE) {
+        if (mathInput.length() > 0) mathInput.deleteCharAt(mathInput.length() - 1);
+        return;
+    }
+    if (code == KeyEvent.VK_ENTER) {
+        if (mathInput.length() == 0) return;
+        String guess = normalizeMathString(mathInput.toString());
+        String ans = normalizeMathString(mathAnswer);
+        mathAttempts++;
+        if (guess.equalsIgnoreCase(ans)) {
+            mathActive = false;
+            mathJustEnded = true;
+            lastMessage = "Seal broken. The relic is yours.";
+            return;
+        }
+        if (mathAttempts >= mathMaxAttempts) {
+            mathActive = false;
+            mathJustEnded = true;
+            lastMessage = "Seal holds. Answer was " + mathAnswer + ".";
+        } else {
+            lastMessage = "Incorrect. Attempts left: " + (mathMaxAttempts - mathAttempts);
+            mathInput = new StringBuilder();
+        }
+        return;
+    }
+    char c = e.getKeyChar();
+    if (isAllowedMathChar(c) && mathInput.length() < 32) {
+        mathInput.append(c);
+    }
+}
+
+// Normalize math strings (accept ^1 as base, ^0 as 1, strip spaces and *)
+private String normalizeMathString(String s) {
+    String out = s.replaceAll("\\s+", "");
+    out = out.replace("*", "");
+    out = out.replaceAll("([0-9]+)\\^1", "$1");
+    out = out.replaceAll("x\\^1", "x");
+    out = out.replaceAll("X\\^1", "x");
+    out = out.replaceAll("([0-9]+)\\^0", "1");
+    out = out.replaceAll("x\\^0", "1");
+    out = out.replaceAll("X\\^0", "1");
+    out = out.replaceAll("\\+0", "");
+    return out.toLowerCase();
+}
+
+private boolean isAllowedMathChar(char c) {
+    String allowed = "0123456789xX^+-*/() ";
+    return allowed.indexOf(c) >= 0;
+}
+
+// On-screen math keyboard
+private int drawMathKeyboard(Graphics2D g2, int startY) {
+    String[] rows = {"1234567890", "xX^+-*/", "()"};
+    int keyW = 34, keyH = 38, gap = 6;
+    g2.setFont(new Font("Consolas", Font.BOLD, 16));
+    for (int r = 0; r < rows.length; r++) {
+        String row = rows[r];
+        int rowWidth = row.length() * (keyW + gap) - gap;
+        int x = getWidth() / 2 - rowWidth / 2;
+        int y = startY + r * (keyH + gap);
+        for (int c = 0; c < row.length(); c++) {
+            char ch = row.charAt(c);
+            int kx = x + c * (keyW + gap);
+            g2.setColor(new Color(35, 35, 35));
+            g2.fillRoundRect(kx, y, keyW, keyH, 6, 6);
+            g2.setColor(new Color(200, 200, 200));
+            g2.drawRoundRect(kx, y, keyW, keyH, 6, 6);
+            String s = String.valueOf(ch);
+            FontMetrics fm = g2.getFontMetrics();
+            int tx = kx + (keyW - fm.stringWidth(s)) / 2;
+            int ty = y + (keyH + fm.getAscent() - fm.getDescent()) / 2;
+            g2.drawString(s, tx, ty);
+        }
+    }
+    return rows.length * (keyH + gap) - gap;
+}
+
+// Draw the math overlay
+private void drawMathOverlay(Graphics2D g2) {
+    g2.setColor(new Color(0, 0, 0, 200));
+    g2.fillRect(0, 0, getWidth(), getHeight());
+
+    g2.setFont(new Font("Consolas", Font.BOLD, 22));
+    g2.setColor(Color.WHITE);
+    String title = "Simple Math";
+    FontMetrics fmTitle = g2.getFontMetrics();
+    g2.drawString(title, getWidth() / 2 - fmTitle.stringWidth(title) / 2, 120);
+
+    g2.setFont(new Font("Consolas", Font.PLAIN, 18));
+    FontMetrics fmQ = g2.getFontMetrics();
+    g2.drawString(mathQuestion, getWidth() / 2 - fmQ.stringWidth(mathQuestion) / 2, 170);
+
+    int boxW = 400, boxH = 42;
+    int boxX = getWidth() / 2 - boxW / 2;
+    int boxY = 200;
+    g2.setColor(new Color(30, 30, 30));
+    g2.fillRoundRect(boxX, boxY, boxW, boxH, 8, 8);
+    g2.setColor(new Color(200, 200, 200));
+    g2.drawRoundRect(boxX, boxY, boxW, boxH, 8, 8);
+
+    String inputStr = mathInput.toString();
+    FontMetrics fmIn = g2.getFontMetrics();
+    g2.drawString(inputStr, boxX + 12, boxY + (boxH + fmIn.getAscent() - fmIn.getDescent()) / 2);
+
+    int kbHeight = drawMathKeyboard(g2, boxY + boxH + 20);
+
+    g2.setFont(new Font("Consolas", Font.PLAIN, 16));
+    g2.setColor(Color.WHITE);
+    String hint = mathJustEnded ? "Press I to try another, ESC to close." : "Type digits/symbols, Enter=submit, Backspace=erase, ESC=exit.";
+    int sw = g2.getFontMetrics().stringWidth(hint);
+    int hintY = boxY + boxH + kbHeight + 60;
+    g2.drawString(hint, getWidth() / 2 - sw / 2, hintY);
+}
