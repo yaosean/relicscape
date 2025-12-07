@@ -29,6 +29,8 @@ public class GamePanel extends JPanel implements KeyListener {
     private static final int FRAME_DELAY_MS  = 33; // ~30 FPS
     private static final double CLEAR_RADIUS_TILES = 1.0; // fully visible within this radius
     private static final double BLACK_RADIUS_TILES = 5.0; // pure black at and beyond this radius
+    private static final double FOG_REVEAL_RADIUS_TILES = 4.5; // how far we permanently reveal
+    private static final double FOG_MAX_RADIUS_TILES    = 11.5; // how far current vision softly fades to dark
     private static final int WORLD_TOP_MARGIN = 30;
     private static final long CORRUPTION_DURATION_MS = 10 * 60 * 1000L; // 10 minutes to fully tint
 
@@ -50,6 +52,8 @@ public class GamePanel extends JPanel implements KeyListener {
     private boolean gameWon  = false;
 
         private final long corruptionStartMs = System.currentTimeMillis();
+
+    private boolean[][] discovered; // fog-of-war memory: [y][x]
 
     
 
@@ -90,6 +94,8 @@ public class GamePanel extends JPanel implements KeyListener {
         player          = new Player(spawnX, spawnY, 10);
         encounterSystem = new EncounterSystem(rand);
         weatherSystem   = new WeatherSystem(rand);
+
+        initializeFog();
 
         timer = new Timer(FRAME_DELAY_MS, e -> repaint());
         timer.start();
@@ -176,7 +182,9 @@ public class GamePanel extends JPanel implements KeyListener {
         }
 
         player.setPosition(newX, newY);
-    lastMoveMs = now;
+        lastMoveMs = now;
+
+        revealAround(newX, newY);
 
         // Encounters disabled in TMX mode
 
@@ -265,11 +273,17 @@ public class GamePanel extends JPanel implements KeyListener {
                 double corruptionStrength = computeCorruptionStrength(worldX, worldY);
                 drawTile(g2, blocked, px, py, isPlayerHere, worldX, worldY, tileSize, corruptionStrength);
 
+                // Fog-of-war overlay per tile
+                int fogAlpha = fogAlphaForTile(worldX, worldY);
+                if (fogAlpha > 0) {
+                    g2.setColor(new Color(0, 0, 0, fogAlpha));
+                    g2.fillRect(px, py, tileSize, tileSize);
+                }
+
             }
         }
 
-        // Radial fog overlay (clear radius -> black radius) centered on the player
-        drawFogOverlay(g2, tileSize, availableWidth, usableHeight, WORLD_TOP_MARGIN, viewWidthTiles, viewHeightTiles, viewLeft, viewTop);
+        // Tile-level fog applied above; no additional radial overlay
 
         // --- HUD ---
         drawHud(g2, tileSize, viewHeightTiles);
@@ -362,31 +376,51 @@ public class GamePanel extends JPanel implements KeyListener {
         // Weather disabled for clarity
     }
 
-        private void drawFogOverlay(Graphics2D g2, int tileSize, int availableWidth, int usableHeight, int topMargin,
-                                    int viewWidthTiles, int viewHeightTiles, int viewLeft, int viewTop) {
-            int viewportWidth = Math.max(availableWidth, viewWidthTiles * tileSize);
-            int viewportHeight = Math.max(usableHeight, viewHeightTiles * tileSize);
-            int centerX = (player.getX() - viewLeft) * tileSize + tileSize / 2;
-            int centerY = topMargin + (player.getY() - viewTop) * tileSize + tileSize / 2;
+    // --- Fog of war helpers ---
 
-        float radius = (float) (tileSize * BLACK_RADIUS_TILES);
-        float clearFrac = (float) (CLEAR_RADIUS_TILES / BLACK_RADIUS_TILES);
-        float midSoft = 0.50f; // slower ramp-in
-        float midFrac = 0.70f; // darker band starts later
-        float[] dist = new float[] { 0f, Math.min(0.99f, clearFrac), midSoft, midFrac, 1f };
-        Color[] cols = new Color[] {
-            new Color(0, 0, 0, 0),    // center clear
-            new Color(0, 0, 0, 0),    // clear radius
-            new Color(0, 0, 0, 90),   // softer ramp
-            new Color(0, 0, 0, 200),  // mid band dark
-            new Color(0, 0, 0, 255)   // full black
-        };
+    private void initializeFog() {
+        discovered = new boolean[world.getHeight()][world.getWidth()];
+        revealAround(player.getX(), player.getY());
+    }
 
-        Paint old = g2.getPaint();
-        RadialGradientPaint paint = new RadialGradientPaint(new Point(centerX, centerY), radius, dist, cols);
-        g2.setPaint(paint);
-        g2.fillRect(0, topMargin, viewportWidth, viewportHeight);
-        g2.setPaint(old);
+    private void revealAround(int cx, int cy) {
+        if (discovered == null) return;
+        int r = (int) Math.ceil(FOG_REVEAL_RADIUS_TILES);
+        double r2 = FOG_REVEAL_RADIUS_TILES * FOG_REVEAL_RADIUS_TILES;
+        for (int y = cy - r; y <= cy + r; y++) {
+            for (int x = cx - r; x <= cx + r; x++) {
+                if (!world.inBounds(x, y)) continue;
+                double dx = x - cx;
+                double dy = y - cy;
+                if (dx * dx + dy * dy <= r2 + 0.25) {
+                    discovered[y][x] = true;
+                }
+            }
+        }
+    }
+
+    private boolean isDiscovered(int x, int y) {
+        return discovered != null && y >= 0 && y < discovered.length && x >= 0 && x < discovered[0].length && discovered[y][x];
+    }
+
+    private int fogAlphaForTile(int worldX, int worldY) {
+        if (!isDiscovered(worldX, worldY)) {
+            return 235; // very dark, but keep a hint of gradient softening
+        }
+
+        double dist = Math.hypot(worldX - player.getX(), worldY - player.getY());
+
+        if (dist <= CLEAR_RADIUS_TILES) return 0;
+
+        double span = Math.max(1e-3, (FOG_MAX_RADIUS_TILES - CLEAR_RADIUS_TILES));
+        double t = (dist - CLEAR_RADIUS_TILES) / span;
+        if (t > 1.0) t = 1.0;
+        if (t < 0.0) t = 0.0;
+
+        double smooth = t * t * (3 - 2 * t); // smoothstep
+        int baseAlpha = 18;   // softer penumbra right after the clear core
+        int maxAlpha = 170;   // explored-but-distant stays dim without going pitch black
+        return (int) Math.round(baseAlpha + (maxAlpha - baseAlpha) * smooth);
     }
 
     private double computeCorruptionStrength(int worldX, int worldY) {
