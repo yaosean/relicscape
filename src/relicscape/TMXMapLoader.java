@@ -12,6 +12,7 @@ public class TMXMapLoader {
     private final List<Tileset> tilesets = new ArrayList<>();
     private final List<int[][]> visualLayers = new ArrayList<>();
     private final List<BlackTileset> blackTilesets = new ArrayList<>();
+    private boolean[][] noSpawn;
     private String baseDir = ".";
 
     public World load(String tmxPath) {
@@ -44,6 +45,7 @@ public class TMXMapLoader {
             World world = new World(width, height);
 
             visualLayers.clear();
+            noSpawn = null;
 
             NodeList layers = map.getElementsByTagName("layer");
             for (int i = 0; i < layers.getLength(); i++) {
@@ -60,6 +62,15 @@ public class TMXMapLoader {
                         for (int x = 0; x < width; x++) {
                             if (gids[y][x] != 0) {
                                 world.setBlocked(x, y, true);
+                            }
+                        }
+                    }
+                } else if (lname.equals("nospawn")) {
+                    ensureNoSpawn(width, height);
+                    for (int y = 0; y < height; y++) {
+                        for (int x = 0; x < width; x++) {
+                            if (gids[y][x] != 0) {
+                                noSpawn[y][x] = true;
                             }
                         }
                     }
@@ -100,6 +111,12 @@ public class TMXMapLoader {
     /** Return all non-collision layers (bottom-to-top). */
     public java.util.List<int[][]> getVisualLayers() {
         return java.util.Collections.unmodifiableList(visualLayers);
+    }
+
+    public boolean isNoSpawn(int x, int y) {
+        if (noSpawn == null) return false;
+        if (y < 0 || y >= noSpawn.length || x < 0 || x >= noSpawn[0].length) return false;
+        return noSpawn[y][x];
     }
 
     private static class BlackTileset {
@@ -195,6 +212,12 @@ public class TMXMapLoader {
             return Integer.parseInt(s);
         } catch (NumberFormatException e) {
             return def;
+        }
+    }
+
+    private void ensureNoSpawn(int width, int height) {
+        if (noSpawn == null) {
+            noSpawn = new boolean[height][width];
         }
     }
 }

@@ -12,6 +12,7 @@ public class RelicManager {
     }
 
     public int goalCount() { return goalPieces; }
+    public void setGoalPieces(int goalPieces) { this.goalPieces = Math.max(0, goalPieces); }
 
     public int bagCount() { return heldPieces; }
 

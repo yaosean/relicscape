@@ -7,6 +7,7 @@ public class Player {
     private float targetY;
     private boolean moving = false;
     private int hp;
+    private int maxHp;
     boolean pendingQuit = false;
     private boolean invulnerable = false;
 
@@ -14,6 +15,7 @@ public class Player {
         this.x = x;
         this.y = y;
         this.hp = startingHp;
+        this.maxHp = startingHp;
     }
 
     public void setInvulnerable(boolean inv) { this.invulnerable = inv; }
@@ -65,6 +67,7 @@ public class Player {
     }
 
     public int getHearts() { return hp; }
+    public int getMaxHearts() { return maxHp; }
 
     public void nickHearts(int amount) {
         if (invulnerable) return;
@@ -72,6 +75,6 @@ public class Player {
     }
 
     public void setHearts(int hp) {
-        this.hp = hp;
+        this.hp = Math.min(maxHp, hp);
     }
 }
