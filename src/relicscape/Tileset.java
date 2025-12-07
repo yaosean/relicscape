@@ -4,13 +4,13 @@ import java.awt.image.BufferedImage;
 import java.io.File;
 import javax.imageio.ImageIO;
 public class Tileset {
-    public final int firstGid;
-    public final BufferedImage image;
-    public final int tileWidth;
-    public final int tileHeight;
-    public final int spacing;
-    public final int margin;
-    public final int columns;
+    public final int firstTid;
+    public final BufferedImage bigPic;
+    public final int chunkWide;
+    public final int chunkTall;
+    public final int gapPix;
+    public final int edgePix;
+    public final int colCount;
 
     public Tileset(int firstGid,
                    String imagePath,
@@ -19,13 +19,13 @@ public class Tileset {
                    int spacing,
                    int margin,
                    int columns) {
-        this.firstGid = firstGid;
-        this.tileWidth = tileWidth;
-        this.tileHeight = tileHeight;
-        this.spacing = spacing;
-        this.margin = margin;
-        this.columns = columns;
-        this.image = grabImageLoose(imagePath);
+        this.firstTid = firstGid;
+        this.chunkWide = tileWidth;
+        this.chunkTall = tileHeight;
+        this.gapPix = spacing;
+        this.edgePix = margin;
+        this.colCount = columns;
+        this.bigPic = grabImageLoose(imagePath);
     }
 
     private BufferedImage grabImageLoose(String imagePath) {
@@ -49,8 +49,8 @@ public class Tileset {
             try {
                 File f = new File(cand);
                 if (!f.exists()) continue;
-                BufferedImage img = ImageIO.read(f);
-                if (img != null) return img;
+                BufferedImage imgGuess = ImageIO.read(f);
+                if (imgGuess != null) return imgGuess;
             } catch (Exception e) {
                 last = e;
             }
@@ -62,18 +62,18 @@ public class Tileset {
      * Returns the subimage for a given global tile id, or null if not within this tileset.
      */
     public BufferedImage getTile(int gid) {
-        int localId = gid - firstGid;
+        int localId = gid - firstTid;
         if (localId < 0) return null;
 
-        int col = localId % columns;
-        int row = localId / columns;
+        int col = localId % colCount;
+        int row = localId / colCount;
 
-        int x = margin + col * (tileWidth + spacing);
-        int y = margin + row * (tileHeight + spacing);
+        int x = edgePix + col * (chunkWide + gapPix);
+        int y = edgePix + row * (chunkTall + gapPix);
 
-        if (x + tileWidth > image.getWidth() || y + tileHeight > image.getHeight()) {
+        if (x + chunkWide > bigPic.getWidth() || y + chunkTall > bigPic.getHeight()) {
             return null;
         }
-        return image.getSubimage(x, y, tileWidth, tileHeight);
+        return bigPic.getSubimage(x, y, chunkWide, chunkTall);
     }
 }

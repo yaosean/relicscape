@@ -6,53 +6,53 @@ public class Util {
     /**
      * Draw text wrapped to a maximum width.
      */
-    public static void drawWrappedText(Graphics2D g2, String text, int x, int y, int maxWidth) {
-        FontMetrics fm = g2.getFontMetrics();
-        String[] words = text.split(" ");
-        StringBuilder line = new StringBuilder();
-        int curY = y;
-        for (String w : words) {
-            String test = line + (line.length() == 0 ? "" : " ") + w;
-            if (fm.stringWidth(test) > maxWidth) {
-                g2.drawString(line.toString(), x, curY);
-                line = new StringBuilder(w);
-                curY += fm.getHeight();
+    public static void drawWrappedText(Graphics2D doodlePen, String chatter, int left, int top, int wrapWidth) {
+        FontMetrics shapeSizer = doodlePen.getFontMetrics();
+        String[] bubbleWords = chatter.split(" ");
+        StringBuilder bubbleLine = new StringBuilder();
+        int bubbleY = top;
+        for (String bubble : bubbleWords) {
+            String testLine = bubbleLine + (bubbleLine.length() == 0 ? "" : " ") + bubble;
+            if (shapeSizer.stringWidth(testLine) > wrapWidth) {
+                doodlePen.drawString(bubbleLine.toString(), left, bubbleY);
+                bubbleLine = new StringBuilder(bubble);
+                bubbleY += shapeSizer.getHeight();
             } else {
-                if (line.length() > 0) line.append(' ');
-                line.append(w);
+                if (bubbleLine.length() > 0) bubbleLine.append(' ');
+                bubbleLine.append(bubble);
             }
         }
-        if (line.length() > 0) {
-            g2.drawString(line.toString(), x, curY);
+        if (bubbleLine.length() > 0) {
+            doodlePen.drawString(bubbleLine.toString(), left, bubbleY);
         }
     }
 
     /**
      * Clamp a float to [0,1].
      */
-    public static float clamp01(float t) {
-        if (t < 0f) return 0f;
-        if (t > 1f) return 1f;
-        return t;
+    public static float clamp01(float squish) {
+        if (squish < 0f) return 0f;
+        if (squish > 1f) return 1f;
+        return squish;
     }
 
     /**
      * Linear interpolation between two colors.
      */
-    public static Color lerpColor(Color a, Color b, float t) {
-        t = clamp01(t);
-        int r = (int) (a.getRed() + (b.getRed() - a.getRed()) * t);
-        int g = (int) (a.getGreen() + (b.getGreen() - a.getGreen()) * t);
-        int bl = (int) (a.getBlue() + (b.getBlue() - a.getBlue()) * t);
-        int al = (int) (a.getAlpha() + (b.getAlpha() - a.getAlpha()) * t);
+    public static Color lerpColor(Color leftColor, Color rightColor, float blendy) {
+        blendy = clamp01(blendy);
+        int r = (int) (leftColor.getRed() + (rightColor.getRed() - leftColor.getRed()) * blendy);
+        int g = (int) (leftColor.getGreen() + (rightColor.getGreen() - leftColor.getGreen()) * blendy);
+        int bl = (int) (leftColor.getBlue() + (rightColor.getBlue() - leftColor.getBlue()) * blendy);
+        int al = (int) (leftColor.getAlpha() + (rightColor.getAlpha() - leftColor.getAlpha()) * blendy);
         return new Color(r, g, bl, al);
     }
 
     // Small, hand-made jitter so repeated tiles differ without looking procedural.
-    public static int scrappyPick(int x, int y, int salt, int mod) {
-        if (mod <= 0) return 0;
-        int h = x * 41 + y * 17 + salt * 13;
+    public static int scrappyPick(int xx, int yy, int sprinkle, int chunk) {
+        if (chunk <= 0) return 0;
+        int h = xx * 41 + yy * 17 + sprinkle * 13;
         h = (h ^ (h << 3)) ^ (h >> 2);
-        return Math.abs(h) % mod;
+        return Math.abs(h) % chunk;
     }
 }

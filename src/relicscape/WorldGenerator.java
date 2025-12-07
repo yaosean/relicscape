@@ -3,68 +3,68 @@ package relicscape;
 import java.util.Random;
 public class WorldGenerator {
 
-    public void generate(World world, RelicManager relicManager, Random rand) {
-        int width = world.getWidth();
-        int height = world.getHeight();
-        int forestEnd = height / 3;
-        int desertEnd = 2 * height / 3;
+    public void generate(World realm, RelicManager shinies, Random dice) {
+        int wide = realm.getWidth();
+        int tall = realm.getHeight();
+        int forestEnd = tall / 3;
+        int desertEnd = 2 * tall / 3;
 
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                if (y < forestEnd) {
-                    world.setTile(x, y, TileType.GRASS);
-                } else if (y < desertEnd) {
-                    world.setTile(x, y, TileType.SAND);
+        for (int loopyY = 0; loopyY < tall; loopyY++) {
+            for (int loopyX = 0; loopyX < wide; loopyX++) {
+                if (loopyY < forestEnd) {
+                    realm.setTile(loopyX, loopyY, TileType.GRASS);
+                } else if (loopyY < desertEnd) {
+                    realm.setTile(loopyX, loopyY, TileType.SAND);
                 } else {
-                    world.setTile(x, y, TileType.RUIN_FLOOR);
+                    realm.setTile(loopyX, loopyY, TileType.RUIN_FLOOR);
                 }
             }
         }
 
-        generateClusters(world, rand, TileType.TREE, 40, 3, 6, 0, forestEnd - 1);
-        generateClusters(world, rand, TileType.ROCK, 18, 2, 4, 0, forestEnd - 1);
-        generateClusters(world, rand, TileType.FLOWER, 35, 2, 5, 0, forestEnd - 1);
+        generateClusters(realm, dice, TileType.TREE, 40, 3, 6, 0, forestEnd - 1);
+        generateClusters(realm, dice, TileType.ROCK, 18, 2, 4, 0, forestEnd - 1);
+        generateClusters(realm, dice, TileType.FLOWER, 35, 2, 5, 0, forestEnd - 1);
 
-        generateClusters(world, rand, TileType.DUNE, 45, 3, 7, forestEnd, desertEnd - 1);
-        generateClusters(world, rand, TileType.CACTUS, 20, 2, 4, forestEnd, desertEnd - 1);
-        generateClusters(world, rand, TileType.ROCK, 15, 2, 4, forestEnd, desertEnd - 1);
+        generateClusters(realm, dice, TileType.DUNE, 45, 3, 7, forestEnd, desertEnd - 1);
+        generateClusters(realm, dice, TileType.CACTUS, 20, 2, 4, forestEnd, desertEnd - 1);
+        generateClusters(realm, dice, TileType.ROCK, 15, 2, 4, forestEnd, desertEnd - 1);
 
-        generateClusters(world, rand, TileType.RUIN_WALL, 30, 3, 6, desertEnd, height - 1);
-        generateClusters(world, rand, TileType.RUBBLE, 35, 2, 5, desertEnd, height - 1);
+        generateClusters(realm, dice, TileType.RUIN_WALL, 30, 3, 6, desertEnd, tall - 1);
+        generateClusters(realm, dice, TileType.RUBBLE, 35, 2, 5, desertEnd, tall - 1);
 
-        carvePathHoriz(world, height / 2);
-        carvePathVert(world, width / 2);
+        carvePathHoriz(realm, tall / 2);
+        carvePathVert(realm, wide / 2);
 
-        int shrineX = width / 2;
-        int shrineY = height / 2;
-        world.setTile(shrineX, shrineY, TileType.SHRINE);
-        relicManager.markShrine(shrineX, shrineY);
+        int shineX = wide / 2;
+        int shineY = tall / 2;
+        realm.setTile(shineX, shineY, TileType.SHRINE);
+        shinies.markShrine(shineX, shineY);
 
-        placeRelicInBand(world, relicManager, rand, 0, forestEnd - 1);
-        placeRelicInBand(world, relicManager, rand, forestEnd, desertEnd - 1);
-        placeRelicInBand(world, relicManager, rand, desertEnd, height - 1);
+        placeRelicInBand(realm, shinies, dice, 0, forestEnd - 1);
+        placeRelicInBand(realm, shinies, dice, forestEnd, desertEnd - 1);
+        placeRelicInBand(realm, shinies, dice, desertEnd, tall - 1);
     }
 
-    private void generateClusters(World world, Random rand, TileType feature, int clusterCount,
-                                  int minRadius, int maxRadius, int yStart, int yEnd) {
-        int width = world.getWidth();
-        int height = world.getHeight();
-        if (yStart < 0) yStart = 0;
-        if (yEnd >= height) yEnd = height - 1;
+    private void generateClusters(World realm, Random dice, TileType feature, int blobCount,
+                                  int minRadius, int maxRadius, int startRow, int endRow) {
+        int wide = realm.getWidth();
+        int tall = realm.getHeight();
+        if (startRow < 0) startRow = 0;
+        if (endRow >= tall) endRow = tall - 1;
 
-        for (int i = 0; i < clusterCount; i++) {
-            int cx = rand.nextInt(width);
-            int cy = yStart + rand.nextInt(Math.max(1, yEnd - yStart + 1));
-            int radius = minRadius + rand.nextInt(Math.max(1, maxRadius - minRadius + 1));
+        for (int blob = 0; blob < blobCount; blob++) {
+            int blobX = dice.nextInt(wide);
+            int blobY = startRow + dice.nextInt(Math.max(1, endRow - startRow + 1));
+            int blobRadius = minRadius + dice.nextInt(Math.max(1, maxRadius - minRadius + 1));
 
-            for (int y = cy - radius; y <= cy + radius; y++) {
-                for (int x = cx - radius; x <= cx + radius; x++) {
-                    if (!world.inBounds(x, y)) continue;
-                    double dist = Math.hypot(x - cx, y - cy);
-                    if (dist <= radius && rand.nextDouble() < 0.8) {
-                        TileType base = world.getTile(x, y);
+            for (int loopyY = blobY - blobRadius; loopyY <= blobY + blobRadius; loopyY++) {
+                for (int loopyX = blobX - blobRadius; loopyX <= blobX + blobRadius; loopyX++) {
+                    if (!realm.inBounds(loopyX, loopyY)) continue;
+                    double blobbyDist = Math.hypot(loopyX - blobX, loopyY - blobY);
+                    if (blobbyDist <= blobRadius && dice.nextDouble() < 0.8) {
+                        TileType base = realm.getTile(loopyX, loopyY);
                         if (isCompatible(base, feature)) {
-                            world.setTile(x, y, feature);
+                            realm.setTile(loopyX, loopyY, feature);
                         }
                     }
                 }
@@ -72,57 +72,57 @@ public class WorldGenerator {
         }
     }
 
-    private boolean isCompatible(TileType base, TileType feature) {
-        switch (feature) {
+    private boolean isCompatible(TileType baseTile, TileType guestTile) {
+        switch (guestTile) {
             case TREE:
             case ROCK:
             case FLOWER:
-                return base == TileType.GRASS;
+                return baseTile == TileType.GRASS;
             case DUNE:
             case CACTUS:
-                return base == TileType.SAND;
+                return baseTile == TileType.SAND;
             case RUIN_WALL:
             case RUBBLE:
-                return base == TileType.RUIN_FLOOR;
+                return baseTile == TileType.RUIN_FLOOR;
             default:
                 return true;
         }
     }
 
-    private void carvePathHoriz(World world, int y) {
-        if (y < 0 || y >= world.getHeight()) return;
-        for (int x = 0; x < world.getWidth(); x++) {
-            world.setTile(x, y, world.baseForRow(y));
+    private void carvePathHoriz(World realm, int laneY) {
+        if (laneY < 0 || laneY >= realm.getHeight()) return;
+        for (int laneX = 0; laneX < realm.getWidth(); laneX++) {
+            realm.setTile(laneX, laneY, realm.baseForRow(laneY));
         }
     }
 
-    private void carvePathVert(World world, int x) {
-        if (x < 0 || x >= world.getWidth()) return;
-        for (int y = 0; y < world.getHeight(); y++) {
-            world.setTile(x, y, world.baseForRow(y));
+    private void carvePathVert(World realm, int laneX) {
+        if (laneX < 0 || laneX >= realm.getWidth()) return;
+        for (int laneY = 0; laneY < realm.getHeight(); laneY++) {
+            realm.setTile(laneX, laneY, realm.baseForRow(laneY));
         }
     }
 
-    private void placeRelicInBand(World world, RelicManager relicManager, Random rand,
-                                  int yStart, int yEnd) {
-        int width = world.getWidth();
-        int height = world.getHeight();
-        if (yStart < 0) yStart = 0;
-        if (yEnd >= height) yEnd = height - 1;
+    private void placeRelicInBand(World realm, RelicManager shinies, Random dice,
+                                  int startRow, int endRow) {
+        int wide = realm.getWidth();
+        int tall = realm.getHeight();
+        if (startRow < 0) startRow = 0;
+        if (endRow >= tall) endRow = tall - 1;
 
-        for (int attempts = 0; attempts < 2000; attempts++) {
-            int x = rand.nextInt(width);
-            int y = yStart + rand.nextInt(Math.max(1, yEnd - yStart + 1));
-            TileType t = world.getTile(x, y);
-            if (t != TileType.SHRINE && t != TileType.RELIC && isWalkable(t)) {
-                world.setTile(x, y, TileType.RELIC);
+        for (int tries = 0; tries < 2000; tries++) {
+            int dropX = dice.nextInt(wide);
+            int dropY = startRow + dice.nextInt(Math.max(1, endRow - startRow + 1));
+            TileType tilePeek = realm.getTile(dropX, dropY);
+            if (tilePeek != TileType.SHRINE && tilePeek != TileType.RELIC && isWalkable(tilePeek)) {
+                realm.setTile(dropX, dropY, TileType.RELIC);
                 return;
             }
         }
     }
 
-    private boolean isWalkable(TileType t) {
-        switch (t) {
+    private boolean isWalkable(TileType stepTile) {
+        switch (stepTile) {
             case TREE:
             case ROCK:
             case CACTUS:

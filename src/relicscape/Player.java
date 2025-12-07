@@ -1,80 +1,80 @@
 package relicscape;
 
 public class Player {
-    private float x;
-    private float y;
-    private float targetX;
-    private float targetY;
-    private boolean moving = false;
-    private int hp;
-    private int maxHp;
+    private float positionX;
+    private float positionY;
+    private float targetPositionX;
+    private float targetPositionY;
+    private boolean isMoving = false;
+    private int currentHearts;
+    private int maxHearts;
     boolean pendingQuit = false;
     private boolean invulnerable = false;
 
-    public Player(float x, float y, int startingHp) {
-        this.x = x;
-        this.y = y;
-        this.hp = startingHp;
-        this.maxHp = startingHp;
+    public Player(float startX, float startY, int startingHearts) {
+        this.positionX = startX;
+        this.positionY = startY;
+        this.currentHearts = startingHearts;
+        this.maxHearts = startingHearts;
     }
 
-    public void setInvulnerable(boolean inv) { this.invulnerable = inv; }
+    public void setInvulnerable(boolean invulnerableFlag) { this.invulnerable = invulnerableFlag; }
 
-    public int getX() { return (int) x; }
-    public int getY() { return (int) y; }
-    public float getFloatX() { return x; }
-    public float getFloatY() { return y; }
+    public int getTileX() { return (int) positionX; }
+    public int getTileY() { return (int) positionY; }
+    public float getExactX() { return positionX; }
+    public float getExactY() { return positionY; }
 
-    public void dropAt(float x, float y) {
-        this.x = x;
-        this.y = y;
-        targetX = x;
-        targetY = y;
-        moving = false;
+    public void setPosition(float x, float y) {
+        this.positionX = x;
+        this.positionY = y;
+        targetPositionX = x;
+        targetPositionY = y;
+        isMoving = false;
     }
 
-    public void moveBy(float dx, float dy) {
-        this.x += dx;
-        this.y += dy;
-        targetX += dx;
-        targetY += dy;
+    public void moveByDelta(float deltaX, float deltaY) {
+        this.positionX += deltaX;
+        this.positionY += deltaY;
+        targetPositionX += deltaX;
+        targetPositionY += deltaY;
     }
 
-    public void setTarget(float tx, float ty) {
-        targetX = tx;
-        targetY = ty;
-        moving = true;
+    public void setTargetPosition(float targetX, float targetY) {
+        targetPositionX = targetX;
+        targetPositionY = targetY;
+        isMoving = true;
     }
 
     public boolean isMoving() {
-        return moving;
+        return isMoving;
     }
 
     public void update(float speed) {
-        if (moving) {
-            float dx = targetX - x;
-            float dy = targetY - y;
-            float dist = (float) Math.sqrt(dx * dx + dy * dy);
-            if (dist < speed) {
-                x = targetX;
-                y = targetY;
-                moving = false;
+        if (isMoving) {
+            float deltaX = targetPositionX - positionX;
+            float deltaY = targetPositionY - positionY;
+            float distance = (float) Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+            if (distance < speed) {
+                positionX = targetPositionX;
+                positionY = targetPositionY;
+                isMoving = false;
             } else {
-                x += (dx / dist) * speed;
-                y += (dy / dist) * speed;
+                positionX += (deltaX / distance) * speed;
+                positionY += (deltaY / distance) * speed;
             }
         }
     }
 
-    public int getHearts() { return hp; }
-    public int getMaxHearts() { return maxHp; }
+    public int getHearts() { return currentHearts; }
+    public int getMaxHearts() { return maxHearts; }
 
-    public void nickHearts(int amount) {
+    public void takeDamage(int amount) {
         if (invulnerable) return;
-        this.hp = Math.max(0, this.hp - amount);
+        this.currentHearts = Math.max(0, this.currentHearts - amount);
     }
 
-    public void setHearts(int hp) {
-        this.hp = Math.min(maxHp, hp);
+    public void setHearts(int hearts) {
+        this.currentHearts = Math.min(maxHearts, hearts);
     }
 }

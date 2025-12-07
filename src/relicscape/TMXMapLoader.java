@@ -9,16 +9,17 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import org.w3c.dom.*;
 public class TMXMapLoader {
 
-    private final List<Tileset> tilesets = new ArrayList<>();
-    private final List<int[][]> visualLayers = new ArrayList<>();
-    private final List<BlackTileset> blackTilesets = new ArrayList<>();
-    private boolean[][] noSpawn;
-    private String baseDir = ".";
+    private final List<Tileset> tileStacks = new ArrayList<>();
+    private final List<int[][]> paintLayers = new ArrayList<>();
+    private final List<BlackTileset> shadowStacks = new ArrayList<>();
+    private final java.util.Map<String, int[][]> petLayers = new java.util.HashMap<>();
+    private boolean[][] nopeGrid;
+    private String homeNest = ".";
 
     public World load(String tmxPath) {
         try {
             File tmxFile = new File(tmxPath);
-            baseDir = tmxFile.getParentFile() != null ? tmxFile.getParentFile().getAbsolutePath() : ".";
+            homeNest = tmxFile.getParentFile() != null ? tmxFile.getParentFile().getAbsolutePath() : ".";
 
             Document doc = DocumentBuilderFactory.newInstance()
                     .newDocumentBuilder()
@@ -30,8 +31,8 @@ public class TMXMapLoader {
             int height = Integer.parseInt(map.getAttribute("height"));
 
             NodeList tsNodes = map.getElementsByTagName("tileset");
-            tilesets.clear();
-            blackTilesets.clear();
+            tileStacks.clear();
+            shadowStacks.clear();
             for (int i = 0; i < tsNodes.getLength(); i++) {
                 Element ts = (Element) tsNodes.item(i);
                 int firstGid = Integer.parseInt(ts.getAttribute("firstgid"));
@@ -39,13 +40,14 @@ public class TMXMapLoader {
                 if (source == null || source.isEmpty()) {
                     continue;
                 }
-                loadTsx(firstGid, new File(baseDir, source).getAbsolutePath());
+                loadTsx(firstGid, new File(homeNest, source).getAbsolutePath());
             }
 
             World world = new World(width, height);
 
-            visualLayers.clear();
-            noSpawn = null;
+            paintLayers.clear();
+            petLayers.clear();
+            nopeGrid = null;
 
             NodeList layers = map.getElementsByTagName("layer");
             for (int i = 0; i < layers.getLength(); i++) {
@@ -70,17 +72,20 @@ public class TMXMapLoader {
                     for (int y = 0; y < height; y++) {
                         for (int x = 0; x < width; x++) {
                             if (gids[y][x] != 0) {
-                                noSpawn[y][x] = true;
+                                nopeGrid[y][x] = true;
                             }
                         }
                     }
                 } else {
-                    visualLayers.add(gids);
+                    paintLayers.add(gids);
+                    if(lname != null && !lname.isEmpty()){
+                        petLayers.put(lname, gids);
+                    }
                 }
             }
 
-            if (!visualLayers.isEmpty()) {
-                int[][] base = visualLayers.get(0);
+            if (!paintLayers.isEmpty()) {
+                int[][] base = paintLayers.get(0);
                 for (int y = 0; y < height; y++) {
                     for (int x = 0; x < width; x++) {
                         world.setTileIndex(x, y, base[y][x]);
@@ -97,12 +102,12 @@ public class TMXMapLoader {
     /** Returns the tile image for a given global ID, or null if none. */
     public java.awt.image.BufferedImage getTileImage(int gid) {
         if (gid <= 0) return null;
-        for (int i = tilesets.size() - 1; i >= 0; i--) {
-            Tileset ts = tilesets.get(i);
+        for (int i = tileStacks.size() - 1; i >= 0; i--) {
+            Tileset ts = tileStacks.get(i);
             java.awt.image.BufferedImage img = ts.getTile(gid);
             if (img != null) return img;
         }
-        for (BlackTileset bts : blackTilesets) {
+        for (BlackTileset bts : shadowStacks) {
             if (bts.contains(gid)) return bts.blackTile;
         }
         return null;
@@ -110,13 +115,27 @@ public class TMXMapLoader {
 
     /** Return all non-collision layers (bottom-to-top). */
     public java.util.List<int[][]> getVisualLayers() {
-        return java.util.Collections.unmodifiableList(visualLayers);
+        return java.util.Collections.unmodifiableList(paintLayers);
+    }
+
+    /** Return the grid for a named layer (case-insensitive), or null if missing. */
+    public int[][] getLayer(String name){
+        if(name==null) return null;
+        return petLayers.get(name.toLowerCase());
+    }
+
+    /** True if the named layer has a non-zero tile at (x,y). */
+    public boolean hasTile(String name,int x,int y){
+        int[][] grid = getLayer(name);
+        if(grid==null) return false;
+        if(y < 0 || y >= grid.length || x < 0 || x >= grid[0].length) return false;
+        return grid[y][x] != 0;
     }
 
     public boolean isNoSpawn(int x, int y) {
-        if (noSpawn == null) return false;
-        if (y < 0 || y >= noSpawn.length || x < 0 || x >= noSpawn[0].length) return false;
-        return noSpawn[y][x];
+        if (nopeGrid == null) return false;
+        if (y < 0 || y >= nopeGrid.length || x < 0 || x >= nopeGrid[0].length) return false;
+        return nopeGrid[y][x];
     }
 
     private static class BlackTileset {
@@ -140,7 +159,7 @@ public class TMXMapLoader {
 
     private void loadTsx(int firstGid, String tsxPath) {
         try {
-            Document doc = DocumentBuilderFactory.newInstance()
+                Document doc = DocumentBuilderFactory.newInstance()
                     .newDocumentBuilder()
                     .parse(new File(tsxPath));
             doc.getDocumentElement().normalize();
@@ -161,12 +180,12 @@ public class TMXMapLoader {
             String imgPath = new File(new File(tsxPath).getParentFile(), source).getAbsolutePath();
 
             try {
-                tilesets.add(new Tileset(firstGid, imgPath, tileWidth, tileHeight, spacing, margin, columns));
+                tileStacks.add(new Tileset(firstGid, imgPath, tileWidth, tileHeight, spacing, margin, columns));
             } catch (RuntimeException ex) {
                 String fileName = new File(tsxPath).getName().toLowerCase();
                 String nameLower = tsName == null ? "" : tsName.toLowerCase();
                 if (fileName.startsWith("960x0") || nameLower.equals("960x0")) {
-                    blackTilesets.add(new BlackTileset(firstGid, tileCount, tileWidth, tileHeight));
+                    shadowStacks.add(new BlackTileset(firstGid, tileCount, tileWidth, tileHeight));
                 }
             }
         } catch (Exception e) {
@@ -216,8 +235,8 @@ public class TMXMapLoader {
     }
 
     private void ensureNoSpawn(int width, int height) {
-        if (noSpawn == null) {
-            noSpawn = new boolean[height][width];
+        if (nopeGrid == null) {
+            nopeGrid = new boolean[height][width];
         }
     }
 }

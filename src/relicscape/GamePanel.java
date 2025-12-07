@@ -37,6 +37,12 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     private String lastMessage = "Explore the world. Find 3 relic fragments and return to the central shrine.";
     private boolean gameOver=false;
     private boolean gameWon = false;
+    private boolean escapedWin = false;
+    private long escapedWinStartMs = 0L;
+    private int endingMinX = -1;
+    private int endingMinY = -1;
+    private int endingMaxX = -1;
+    private int endingMaxY = -1;
     private boolean facingRight = true;
     private boolean moving=false;
     private boolean onStartScreen=true;
@@ -51,6 +57,9 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     private boolean corruptionPhaseTwo = false;
     private long corruptionExposureStartMs = -1L;
     private double corruptionDamageRemainder = 0.0;
+    private final double corruptionEntryThreshold = 0.04;
+    private final double corruptionExitThreshold = 0.02;
+    private boolean inCorruptionZone = false;
 
     private boolean[][] discovered;
     private BufferedImage[] soldierWalkFrames;
@@ -59,10 +68,18 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     private BufferedImage[] soldierDeathFrames;
     private final StartScreenRenderer startScreen;
     private final List<RelicDrop> looseShinies = new ArrayList<>();
-    private enum MonsterType { EYE, JELLY }
+    private enum MonsterType { EYE, JELLY, GOLEM, NECRO }
     private final List<Monster> monsters = new ArrayList<>();
     private BufferedImage[] monsterEyeFrames;
     private BufferedImage[] monsterJellyFrames;
+    private BufferedImage[] golemWalkFrames;
+    private BufferedImage[] golemIdleFrames;
+    private BufferedImage[] golemAttackFrames;
+    private BufferedImage[] necroIdleFrames;
+    private BufferedImage[] necroWalkFrames;
+    private BufferedImage[] necroAttackFrames;
+    private BufferedImage[] necroAttackFxFrames;
+    private BufferedImage[] necroSpawnFrames;
 
     private boolean firstRelicCutsceneStarted = false;
     private boolean firstRelicCutsceneActive = false;
@@ -80,6 +97,11 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         private boolean thirdRelicCutsceneAwaitingContinue = false;
         private long thirdRelicCutsceneStartMs = 0L;
         private final long thirdRelicCutsceneDurationMs = 4800L;
+    private boolean necroCutsceneActive = false;
+    private boolean necroCutsceneDone = false;
+    private boolean necroCutsceneAwaitingContinue = false;
+    private long necroCutsceneStartMs = 0L;
+    private final long necroCutsceneDurationMs = 5200L;
     private long nextMonsterSpawnMs = Long.MAX_VALUE;
     private final int maxMonsters = 12;
     private final int maxPerType = 2;
@@ -101,6 +123,7 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         TMXMapLoader loader = new TMXMapLoader();
         world = loader.load("images/dreams.tmx");
         this.mapLoader=loader;
+        computeEndingBounds();
 
         relicBag = new RelicManager(0);
 
@@ -147,6 +170,10 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     public void keyPressed(KeyEvent e) {
         if(thirdRelicCutsceneActive && thirdRelicCutsceneAwaitingContinue){
             completeThirdRelicCutscene();
+            return;
+        }
+        if(necroCutsceneActive && necroCutsceneAwaitingContinue){
+            completeNecroCutscene();
             return;
         }
         if(secondRelicCutsceneActive && secondRelicCutsceneAwaitingContinue){
@@ -232,6 +259,10 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
             completeThirdRelicCutscene();
             return;
         }
+        if(necroCutsceneActive && necroCutsceneAwaitingContinue){
+            completeNecroCutscene();
+            return;
+        }
         if(secondRelicCutsceneActive && secondRelicCutsceneAwaitingContinue){
             completeSecondRelicCutscene();
             return;
@@ -268,8 +299,8 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         if(now-lastMoveMs<MOVE_GAP_MS){
             return;
         }
-        int newX=player.getX()+dx;
-        int newY=player.getY()+dy;
+        int newX=player.getTileX()+dx;
+        int newY=player.getTileY()+dy;
 
         if(!world.inBounds(newX,newY)){
             lastMessage="You feel the edge of the world.";
@@ -281,7 +312,7 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
             return;
         }
 
-        player.dropAt(newX, newY);
+        player.setPosition(newX, newY);
         lastMoveMs=now;
         moving=true;
 
@@ -292,6 +323,7 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         peelFog(newX,newY);
         TileType tile = world.getTile(newX,newY);
         feelTile(tile);
+        maybeTriggerEscape();
         pickupLooseRelic();
         checkIfDone();
     }
@@ -299,7 +331,7 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     private void feelTile(TileType tile) {
         if(tile==TileType.RELIC){
             relicBag.stashOne();
-            world.setTile(player.getX(),player.getY(),world.baseForRow(player.getY()));
+            world.setTile(player.getTileX(),player.getTileY(),world.baseForRow(player.getTileY()));
             lastMessage="You found a relic fragment! ("+
                     relicBag.bagCount()+"/"+relicBag.goalCount()+")";
             if(!firstRelicCutsceneStarted){
@@ -308,6 +340,7 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
             startCorruptionIfReady();
             maybeTriggerSecondCutscene();
             maybeTriggerThirdCutscene();
+            maybeTriggerNecroCutscene();
         } else if(tile==TileType.SHRINE){
             if(relicBag.doneGathering()){
                 gameWon=true;
@@ -320,7 +353,11 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         } else if(tile==TileType.RUBBLE){
             lastMessage="Broken stones crunch underfoot.";
         } else {
-            lastMessage="You move onward.";
+            if(tileIsCorrupted(player.getTileX(), player.getTileY())){
+                lastMessage="The corruption crackles—get out now!";
+            } else {
+                lastMessage="You move onward.";
+            }
         }
     }
 
@@ -342,6 +379,19 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         }
     }
 
+    private void maybeTriggerEscape(){
+        if(gameOver || gameWon) return;
+        if(mapLoader == null) return;
+        if(!relicBag.doneGathering()) return;
+        int px = player.getTileX();
+        int py = player.getTileY();
+        if(!mapLoader.hasTile("ending", px, py)) return;
+        escapedWin = true;
+        gameWon = true;
+        escapedWinStartMs = System.currentTimeMillis();
+        lastMessage = "You step into the radiant rift...";
+    }
+
     private void loadPlayerLook(){
         soldierIdleFrames = loadStrip("char/Soldier with shadows/soldier-idle.png");
         soldierWalkFrames = loadStrip("char/Soldier with shadows/soldier-walk.png");
@@ -356,20 +406,26 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         }
 
         Random rand = new Random(System.currentTimeMillis());
-        int[][] base = mapLoader.getVisualLayers().isEmpty()?null:mapLoader.getVisualLayers().get(0);
+        int[][] base = mapLoader.getLayer("tile layer 1");
 
         for(BufferedImage pic : pics){
             for(int tries=0; tries<4000; tries++){
                 int x = rand.nextInt(world.getWidth());
                 int y = rand.nextInt(world.getHeight());
 
-                if(base!=null && base[y][x]==0) continue; // needs a painted tile
+                if(base==null) continue; // require tile layer 1 present
+                if(y < 0 || y >= base.length || x < 0 || x >= base[0].length) continue;
+                if(base[y][x]==0) continue; // needs a painted tile
                 if(mapLoader.isNoSpawn(x,y)) continue;
                 if(world.isBlocked(x,y)) continue;
-                if(x==player.getX() && y==player.getY()) continue;
+                if(mapLoader.hasTile("walls", x, y)) continue;
+                if(mapLoader.hasTile("wall_vert", x, y)) continue;
+                if(mapLoader.hasTile("objects", x, y)) continue;
+                if(mapLoader.hasTile("extra", x, y)) continue;
+                if(x==player.getTileX() && y==player.getTileY()) continue;
 
                 if(tooCloseToOtherDrops(x,y,12)) continue;
-                if(Math.abs(x-player.getX()) + Math.abs(y-player.getY()) < 10) continue;
+                if(Math.abs(x-player.getTileX()) + Math.abs(y-player.getTileY()) < 10) continue;
 
                 looseShinies.add(new RelicDrop(x,y,pic));
                 break;
@@ -475,8 +531,8 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         int viewWidthTiles = Math.max(1,(int)Math.ceil(availableWidth/(double)tileSize));
         int viewHeightTiles =  Math.max(1,(int)Math.ceil(usableHeight/(double)tileSize));
 
-        int viewLeft = (int)Math.round(player.getX()-(viewWidthTiles-1)/2.0);
-        int viewTop  = (int)Math.round(player.getY()-(viewHeightTiles-1)/2.0);
+        int viewLeft = (int)Math.round(player.getTileX()-(viewWidthTiles-1)/2.0);
+        int viewTop  = (int)Math.round(player.getTileY()-(viewHeightTiles-1)/2.0);
 
         if(viewLeft<0) viewLeft=0;
         if(viewTop<0){
@@ -518,7 +574,7 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
                 }
 
                 boolean blocked=world.isBlocked(worldX,worldY);
-                boolean isPlayerHere=(worldX==player.getX()&&worldY==player.getY());
+                boolean isPlayerHere=(worldX==player.getTileX()&&worldY==player.getTileY());
 
                 int px=x*tileSize;
                 int py = topPad + y*tileSize;
@@ -536,6 +592,27 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         }
 
         drawMonsters(g2, viewLeft, viewTop, tileSize, viewWidthTiles, viewHeightTiles);
+
+        // Single halo over the ending portal when all relics are gathered
+        if(relicBag.doneGathering() && endingMinX >= 0 && mapLoader != null){
+            int haloLeftTiles = endingMinX - viewLeft;
+            int haloTopTiles = endingMinY - viewTop;
+            int haloWtiles = endingMaxX - endingMinX + 1;
+            int haloHtiles = endingMaxY - endingMinY + 1;
+            if(haloLeftTiles < viewWidthTiles && haloTopTiles < viewHeightTiles && haloLeftTiles + haloWtiles > 0 && haloTopTiles + haloHtiles > 0){
+                double pulse = Math.sin(System.currentTimeMillis()/320.0)*0.25 + 0.75;
+                int haloW = (int)Math.round(haloWtiles * tileSize * 1.2);
+                int haloH = (int)Math.round(haloHtiles * tileSize * 1.2);
+                int haloX = (int)Math.round((haloLeftTiles * tileSize) + (haloWtiles*tileSize - haloW)/2.0);
+                int haloY = topPad + (int)Math.round((haloTopTiles * tileSize) + (haloHtiles*tileSize - haloH)/2.0);
+                int alphaOuter = (int)(60 * pulse);
+                int alphaInner = (int)(40 * pulse);
+                g2.setColor(new Color(120, 220, 255, alphaOuter));
+                g2.fillOval(haloX, haloY, haloW, haloH);
+                g2.setColor(new Color(255, 255, 255, alphaInner));
+                g2.fillOval(haloX + 10, haloY + 10, Math.max(10, haloW - 20), Math.max(10, haloH - 20));
+            }
+        }
 
         drawVignette(g2);
         if(corruptionTintActive && !firstRelicCutsceneActive && !secondRelicCutsceneActive){
@@ -555,11 +632,20 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         if(thirdRelicCutsceneActive){
             drawThirdRelicCutsceneOverlay(g2);
         }
+        if(necroCutsceneActive){
+            drawNecroCutsceneOverlay(g2);
+        }
 
         g2.translate(-shakeX, -shakeY);
 
-        if(gameOver||gameWon){
+        if(gameOver){
             drawGameOverOverlay(g2);
+        } else if(gameWon){
+            if(escapedWin){
+                drawEscapeWinOverlay(g2);
+            } else {
+                drawGameOverOverlay(g2);
+            }
         }
     }
 
@@ -682,91 +768,180 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         g2.drawString(lastMessage, tx, ty);
     }
 
-    private void drawVignette(Graphics2D g2){
-        Composite old = g2.getComposite();
-        g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.32f));
-        g2.setColor(new Color(0,0,0));
-        int w = getWidth();
-        int h = getHeight();
-        int margin = 32;
-        g2.fillRect(0,0,w,margin);
-        g2.fillRect(0,h-margin,w,margin);
-        g2.fillRect(0,0,margin,h);
-        g2.fillRect(w-margin,0,margin,h);
-        g2.setComposite(old);
+    private void drawVignette(Graphics2D shadePen){
+        Composite oldInk = shadePen.getComposite();
+        shadePen.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.32f));
+        shadePen.setColor(new Color(0,0,0));
+        int screenWide = getWidth();
+        int screenTall = getHeight();
+        int borderFat = 32;
+        shadePen.fillRect(0,0,screenWide,borderFat);
+        shadePen.fillRect(0,screenTall-borderFat,screenWide,borderFat);
+        shadePen.fillRect(0,0,borderFat,screenTall);
+        shadePen.fillRect(screenWide-borderFat,0,borderFat,screenTall);
+        shadePen.setComposite(oldInk);
     }
 
-    private void drawGameOverOverlay(Graphics2D g2){
-        String msg;
+    private void drawGameOverOverlay(Graphics2D overPen){
+        String bigShout;
         if(gameWon){
-            msg = "YOU RESTORED THE WORLD";
+            bigShout = "YOU RESTORED THE WORLD";
         } else {
-            msg = "YOU FELL IN THE RUINS";
+            bigShout = "YOU FELL IN THE RUINS";
         }
 
-        g2.setFont(new Font("Consolas",Font.BOLD,26));
-        g2.setColor(new Color(255,255,255,230));
-        FontMetrics fm = g2.getFontMetrics();
-        int tw=fm.stringWidth(msg);
-        int th=fm.getAscent();
+        overPen.setFont(new Font("Consolas",Font.BOLD,26));
+        overPen.setColor(new Color(255,255,255,230));
+        FontMetrics wordSizer = overPen.getFontMetrics();
+        int shoutWide=wordSizer.stringWidth(bigShout);
+        int shoutTall=wordSizer.getAscent();
 
-        int cx=getWidth()/2-tw/2;
-        int cy=getHeight()/2-th/2;
-        g2.drawString(msg, cx, cy);
+        int centerX=getWidth()/2-shoutWide/2;
+        int centerY=getHeight()/2-shoutTall/2;
+        overPen.drawString(bigShout, centerX, centerY);
 
-        g2.setFont(new Font("Consolas", Font.PLAIN, 16));
-        String sub = "Press ESC to quit.";
-        int sw = g2.getFontMetrics().stringWidth(sub);
-        g2.drawString(sub, getWidth()/2 - sw/2, cy+30);
+        overPen.setFont(new Font("Consolas", Font.PLAIN, 16));
+        String lilNote = "Press ESC to quit.";
+        int lilWide = overPen.getFontMetrics().stringWidth(lilNote);
+        overPen.drawString(lilNote, getWidth()/2 - lilWide/2, centerY+30);
     }
 
-    private void drawTile(Graphics2D g2,boolean blocked,int px,int py,
+    private void drawEscapeWinOverlay(Graphics2D g2){
+        int w = getWidth();
+        int h = getHeight();
+        long elapsed = System.currentTimeMillis() - escapedWinStartMs;
+        float t = Math.min(1f, elapsed / 3200f);
+        float pulse = (float)(0.6 + 0.4*Math.sin(elapsed/180.0));
+
+        // Radiant gradient backdrop
+        Color top = new Color(30, 10, 50, 240);
+        Color mid = new Color(90, 40, 140, 200);
+        Color bot = new Color(10, 90, 120, 200);
+        GradientPaint gp = new GradientPaint(0, 0, top, 0, h, bot, true);
+        g2.setPaint(gp);
+        g2.fillRect(0,0,w,h);
+
+        // Concentric light rings
+        g2.setColor(new Color(255, 230, 200, 80));
+        for(int i=0;i<7;i++){
+            int r = (int)(120 + i*46 + 12*Math.sin((elapsed/260.0)+i));
+            int cx = w/2;
+            int cy = h/2;
+            g2.drawOval(cx - r, cy - r, r*2, r*2);
+        }
+
+        // Star field sparkle
+        java.util.Random randy = new java.util.Random(42);
+        g2.setColor(new Color(255, 245, 230, 160));
+        for(int i=0;i<140;i++){
+            int sx = randy.nextInt(w);
+            int sy = randy.nextInt(h);
+            int sz = 1 + randy.nextInt(2);
+            g2.fillRect(sx, sy, sz, sz);
+        }
+
+        // Center glow
+        int glowR = (int)(260 + 40*pulse);
+        g2.setColor(new Color(255, 240, 220, 120));
+        g2.fillOval(w/2 - glowR/2, h/2 - glowR/2, glowR, glowR);
+        g2.setColor(new Color(255, 255, 255, 200));
+        g2.fillOval(w/2 - glowR/4, h/2 - glowR/4, glowR/2, glowR/2);
+
+        // Text
+        g2.setColor(new Color(255, 248, 240));
+        g2.setFont(new Font("Garamond", Font.BOLD, 40));
+        String title = "YOU ESCAPED WITH THE RELICS";
+        int tw = g2.getFontMetrics().stringWidth(title);
+        g2.drawString(title, (w - tw)/2, h/2 - 40);
+
+        g2.setFont(new Font("Consolas", Font.PLAIN, 20));
+        String line1 = "Light folds around you. The corruption dissolves.";
+        String line2 = "The relics hum — their promise kept.";
+        int l1w = g2.getFontMetrics().stringWidth(line1);
+        int l2w = g2.getFontMetrics().stringWidth(line2);
+        g2.drawString(line1, (w - l1w)/2, h/2 + 6);
+        g2.drawString(line2, (w - l2w)/2, h/2 + 32);
+
+        g2.setFont(new Font("Garamond", Font.BOLD, 22));
+        String prompt = "Press ESC to leave the restored world.";
+        int pw = g2.getFontMetrics().stringWidth(prompt);
+        g2.drawString(prompt, (w - pw)/2, h - 60);
+    }
+
+    private void computeEndingBounds(){
+        if(mapLoader == null) return;
+        int[][] ending = mapLoader.getLayer("ending");
+        if(ending == null) return;
+        int h = ending.length;
+        int w = h > 0 ? ending[0].length : 0;
+        int minX=Integer.MAX_VALUE, minY=Integer.MAX_VALUE, maxX=-1, maxY=-1;
+        for(int y=0;y<h;y++){
+            for(int x=0;x<w;x++){
+                if(ending[y][x]!=0){
+                    if(x<minX) minX=x;
+                    if(y<minY) minY=y;
+                    if(x>maxX) maxX=x;
+                    if(y>maxY) maxY=y;
+                }
+            }
+        }
+        if(maxX>=minX && maxY>=minY){
+            endingMinX = minX;
+            endingMinY = minY;
+            endingMaxX = maxX;
+            endingMaxY = maxY;
+        }
+    }
+
+    private void drawTile(Graphics2D tilePen,boolean blocked,int paintX,int paintY,
                           boolean isPlayerHere,int worldX,int worldY,int tileSize,double corruptionStrength){
 
-        Color bg=new Color(20,25,28);
-        g2.setColor(bg);
-        g2.fillRect(px,py,tileSize,tileSize);
+        Color floorInk=new Color(20,25,28);
+        tilePen.setColor(floorInk);
+        tilePen.fillRect(paintX,paintY,tileSize,tileSize);
 
         if(mapLoader!=null){
             java.util.List<int[][]> layers=mapLoader.getVisualLayers();
-            for(int l=0;l<layers.size();l++){
-                int[][] layer=layers.get(l);
-                int gid=layer[worldY][worldX];
+            for(int layerIndex=0;layerIndex<layers.size();layerIndex++){
+                int[][] layerGrid=layers.get(layerIndex);
+                int gid=layerGrid[worldY][worldX];
                 if(gid<=0) continue;
-                java.awt.image.BufferedImage img=mapLoader.getTileImage(gid);
-                if(img!=null){
-                    g2.drawImage(img,px,py,tileSize,tileSize,null);
+                // Skip rendering ending tiles; they are portal markers only
+                if(mapLoader.getLayer("ending") == layerGrid) continue;
+                java.awt.image.BufferedImage imgTile=mapLoader.getTileImage(gid);
+                if(imgTile!=null){
+                    tilePen.drawImage(imgTile,paintX,paintY,tileSize,tileSize,null);
                 }
             }
         }
 
         for(RelicDrop drop : looseShinies){
             if(drop.x==worldX && drop.y==worldY && drop.pic!=null){
-                int dw=Math.max(18, tileSize-32);
-                int dh=Math.max(18, tileSize-32);
-                int ox = px + (tileSize - dw)/2;
-                int oy = py + (tileSize - dh)/2;
+                int dropW=Math.max(18, tileSize-32);
+                int dropH=Math.max(18, tileSize-32);
+                int dropX = paintX + (tileSize - dropW)/2;
+                int dropY = paintY + (tileSize - dropH)/2;
 
                 // subtle halo just on this tile and under fog
                 double pulse = Math.sin(System.currentTimeMillis()/780.0)*0.04;
-                int halo = (int)(tileSize*(0.92 + pulse));
-                int hx = px + (tileSize - halo)/2;
-                int hy = py + (tileSize - halo)/2;
-                g2.setColor(new Color(255, 230, 180, 52));
-                g2.fillOval(hx, hy, halo, halo);
-                g2.setColor(new Color(255, 245, 220, 36));
-                g2.fillOval(hx+2, hy+2, halo-4, halo-4);
+                int haloSize = (int)(tileSize*(0.92 + pulse));
+                int haloX = paintX + (tileSize - haloSize)/2;
+                int haloY = paintY + (tileSize - haloSize)/2;
+                tilePen.setColor(new Color(255, 230, 180, 52));
+                tilePen.fillOval(haloX, haloY, haloSize, haloSize);
+                tilePen.setColor(new Color(255, 245, 220, 36));
+                tilePen.fillOval(haloX+2, haloY+2, haloSize-4, haloSize-4);
 
                 int bob = (int)(Math.sin(System.currentTimeMillis()/520.0) * 3);
-                g2.drawImage(drop.pic, ox, oy + bob, dw, dh, null);
+                tilePen.drawImage(drop.pic, dropX, dropY + bob, dropW, dropH, null);
                 break;
             }
         }
 
         if(corruptionStrength>0.01){
-            int alpha=(int)Math.min(230,Math.round(230*corruptionStrength));
-            g2.setColor(new Color(80,40,120,alpha));
-            g2.fillRect(px,py,tileSize,tileSize);
+            int spookyAlpha=(int)Math.min(230,Math.round(230*corruptionStrength));
+            tilePen.setColor(new Color(80,40,120,spookyAlpha));
+            tilePen.fillRect(paintX,paintY,tileSize,tileSize);
         }
 
         if(isPlayerHere){
@@ -775,19 +950,19 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
             boolean dying = gameOver && deathAnimStartMs > 0;
             BufferedImage frame = pickFace(walking, hurt, dying);
             if(frame!=null){
-                int sw = frame.getWidth()*5;
-                int sh = frame.getHeight()*5;
-                int ox = px + (tileSize - sw)/2;
-                int oy = py + (tileSize - sh)/2;
+                int faceW = frame.getWidth()*5;
+                int faceH = frame.getHeight()*5;
+                int faceX = paintX + (tileSize - faceW)/2;
+                int faceY = paintY + (tileSize - faceH)/2;
                 if(facingRight){
-                    g2.drawImage(frame, ox, oy, sw, sh, null);
+                    tilePen.drawImage(frame, faceX, faceY, faceW, faceH, null);
                 } else {
-                    g2.drawImage(frame, ox+sw, oy, -sw, sh, null);
+                    tilePen.drawImage(frame, faceX+faceW, faceY, -faceW, faceH, null);
                 }
             } else {
-                g2.setColor(new Color(240,240,255));
+                tilePen.setColor(new Color(240,240,255));
                 int inset=Math.max(4,tileSize/8);
-                g2.fillRect(px+inset,py+inset,tileSize-inset*2,tileSize-inset*2);
+                tilePen.fillRect(paintX+inset,paintY+inset,tileSize-inset*2,tileSize-inset*2);
             }
         }
     }
@@ -835,15 +1010,79 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         float x;
         float y;
         final BufferedImage[] frames;
+        BufferedImage[] idleFrames;
+        BufferedImage[] walkFrames;
+        BufferedImage[] attackFrames;
+        BufferedImage[] closeAttackFrames;
         final float speedTilesPerSec;
         final long frameTimeMs = 140L;
         float moveBuffer = 0f;
         final MonsterType type;
         boolean facingRight = true;
+        boolean movedLastTick = false;
+        long attackAnimStartMs = -1L;
+        long closeAttackAnimStartMs = -1L;
+        long nextAttackReadyMs = 0L;
+        float headingX = 0f;
+        float headingY = 0f;
+        float targetX = 0f;
+        float targetY = 0f;
+        long nextRetargetMs = 0L;
+        float velX = 0f;
+        float velY = 0f;
+        float orbitAngleRad = 0f;
+        int orbitDir = 1;
+        long nextOrbitFlipMs = 0L;
         Monster(float x,float y,BufferedImage[] frames,float speedTilesPerSec, MonsterType type){
             this.x=x; this.y=y; this.frames=frames; this.speedTilesPerSec=speedTilesPerSec; this.type=type;
+            this.walkFrames = frames;
         }
         BufferedImage pickFrame(){
+            if(type == MonsterType.GOLEM){
+                if(attackFrames != null && attackAnimStartMs > 0L){
+                    long elapsed = System.currentTimeMillis() - attackAnimStartMs;
+                    long frameTime = 110L;
+                    int idx = (int)Math.min(attackFrames.length-1, elapsed / frameTime);
+                    if(elapsed >= attackFrames.length * frameTime){
+                        attackAnimStartMs = -1L;
+                    }
+                    return attackFrames[idx];
+                }
+                BufferedImage[] active = movedLastTick && walkFrames != null ? walkFrames
+                        : (idleFrames != null ? idleFrames : frames);
+                if(active==null || active.length==0) return null;
+                long ticks = System.currentTimeMillis() / frameTimeMs;
+                int idx = (int)(ticks % active.length);
+                return active[idx];
+            }
+
+            if(type == MonsterType.NECRO){
+                if(closeAttackFrames != null && closeAttackAnimStartMs > 0L){
+                    long elapsed = System.currentTimeMillis() - closeAttackAnimStartMs;
+                    long frameTime = 60L;
+                    int idx = (int)Math.min(closeAttackFrames.length-1, elapsed / frameTime);
+                    if(elapsed >= closeAttackFrames.length * frameTime){
+                        closeAttackAnimStartMs = -1L;
+                    }
+                    return closeAttackFrames[idx];
+                }
+                if(attackFrames != null && attackAnimStartMs > 0L){
+                    long elapsed = System.currentTimeMillis() - attackAnimStartMs;
+                    long frameTime = 55L;
+                    int idx = (int)Math.min(attackFrames.length-1, elapsed / frameTime);
+                    if(elapsed >= attackFrames.length * frameTime){
+                        attackAnimStartMs = -1L;
+                    }
+                    return attackFrames[idx];
+                }
+                BufferedImage[] active = movedLastTick && walkFrames != null ? walkFrames
+                        : (idleFrames != null ? idleFrames : frames);
+                if(active==null || active.length==0) return null;
+                long ticks = System.currentTimeMillis() / frameTimeMs;
+                int idx = (int)(ticks % active.length);
+                return active[idx];
+            }
+
             BufferedImage[] active = frames;
             if(active==null || active.length==0) return null;
             long ticks = System.currentTimeMillis() / frameTimeMs;
@@ -852,9 +1091,35 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         }
     }
 
+    private static class AttackEffect{
+        float x;
+        float y;
+        float dx;
+        float dy;
+        final BufferedImage[] frames;
+        final long startMs;
+        final long lifeMs = 2200L;
+        boolean facingRight;
+        AttackEffect(float x,float y,float dx,float dy,BufferedImage[] frames,boolean facingRight){
+            this.x=x; this.y=y; this.dx=dx; this.dy=dy; this.frames=frames; this.startMs=System.currentTimeMillis();
+            this.facingRight = facingRight;
+        }
+        boolean expired(){
+            return System.currentTimeMillis() - startMs > lifeMs;
+        }
+        BufferedImage pickFrame(){
+            if(frames==null || frames.length==0) return null;
+            long ticks = (System.currentTimeMillis() - startMs) / 40L;
+            int idx = (int)(ticks % frames.length);
+            return frames[idx];
+        }
+    }
+
+    private final java.util.List<AttackEffect> spookyBlasts = new java.util.ArrayList<>();
+
     private void wakeFog() {
         discovered = new boolean[world.getHeight()][world.getWidth()];
-        peelFog(player.getX(), player.getY());
+        peelFog(player.getTileX(), player.getTileY());
     }
 
     private void peelFog(int cx, int cy){
@@ -894,10 +1159,10 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     private void pickupLooseRelic(){
         for(int i=0;i<looseShinies.size();i++){
             RelicDrop d = looseShinies.get(i);
-            if(d.x==player.getX() && d.y==player.getY()){
+            if(d.x==player.getTileX() && d.y==player.getTileY()){
                 looseShinies.remove(i);
                 relicBag.stashOne();
-                world.setTile(player.getX(),player.getY(),world.baseForRow(player.getY()));
+                world.setTile(player.getTileX(),player.getTileY(),world.baseForRow(player.getTileY()));
                 lastMessage="You found a relic fragment! ("+
                         relicBag.bagCount()+"/"+relicBag.goalCount()+")";
                 if(!firstRelicCutsceneStarted){
@@ -906,6 +1171,7 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
                 startCorruptionIfReady();
                 maybeTriggerSecondCutscene();
                 maybeTriggerThirdCutscene();
+                maybeTriggerNecroCutscene();
                 return;
             }
         }
@@ -936,9 +1202,44 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         }
     }
 
+    private void maybeTriggerNecroCutscene(){
+        if(necroCutsceneActive || necroCutsceneDone) return;
+        if(firstRelicCutsceneActive || secondRelicCutsceneActive || thirdRelicCutsceneActive) return;
+        if(relicBag.doneGathering()){
+            triggerNecroCutscene();
+        }
+    }
+
     private void loadMonsterSprites(){
         monsterEyeFrames = loadStrip("monsters/OcularWatcher.png");
         monsterJellyFrames = loadStrip("monsters/DeathSlime.png");
+        golemIdleFrames = loadStripFixed("monsters/Blue/White_Swoosh_VFX/Golem_1_idle.png", 8);
+        golemWalkFrames = loadStripFixed("monsters/Blue/White_Swoosh_VFX/Golem_1_walk.png", 10);
+        golemAttackFrames = loadStripFixed("monsters/Blue/White_Swoosh_VFX/Golem_1_attack.png", 11);
+        necroIdleFrames = loadStripFixed("monsters/Necromancer/Idle/spr_NecromancerIdle_strip50.png", 50);
+        necroWalkFrames = loadStripFixed("monsters/Necromancer/Walk/spr_NecromancerWalk_strip10.png", 10);
+        necroAttackFrames = loadStripFixed("monsters/Necromancer/Attack/spr_NecromancerAttackWithoutEffect_strip47.png", 47);
+        necroAttackFxFrames = loadStripFixed("monsters/Necromancer/Attack/spr_NecromancerAttackEffect_strip47.png", 47);
+        necroSpawnFrames = loadStripFixed("monsters/Necromancer/Spawn/spr_NecromancerSpawn_strip20.png", 20);
+    }
+
+    private BufferedImage[] loadStripFixed(String path, int frames){
+        try{
+            BufferedImage sheet = ImageIO.read(new File(path));
+            if(sheet==null || frames<=0) return null;
+            int h = sheet.getHeight();
+            int frameW = Math.max(1, sheet.getWidth()/frames);
+            BufferedImage[] out = new BufferedImage[frames];
+            for(int i=0;i<frames;i++){
+                int fx = Math.min(sheet.getWidth()-1, i*frameW);
+                int fw = (i==frames-1) ? sheet.getWidth()-fx : frameW;
+                fw = Math.max(1, fw);
+                out[i] = sheet.getSubimage(fx, 0, fw, h);
+            }
+            return out;
+        } catch(Exception ex){
+            return null;
+        }
     }
 
     private void updateGame(){
@@ -973,9 +1274,21 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
             return;
         }
 
+        if(necroCutsceneActive){
+            long elapsed = System.currentTimeMillis() - necroCutsceneStartMs;
+            if(elapsed >= necroCutsceneDurationMs){
+                necroCutsceneAwaitingContinue = true;
+            }
+            return;
+        }
+
         if(firstRelicCutsceneDone){
             handleMonsterSpawns();
             updateMonsters();
+            checkMonsterContacts();
+        } else {
+            // Allow the necromancer to chase even before the first relic cutscene completes
+            updateNecroOnly();
             checkMonsterContacts();
         }
 
@@ -1035,7 +1348,26 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         thirdRelicCutsceneAwaitingContinue = false;
         thirdRelicCutsceneDone = true;
         player.setInvulnerable(false);
-        lastMessage = "The corruption surges.";
+        lastMessage = "A stone golem emerges from the corruption.";
+        spawnGolemHuntersNearPlayer(2);
+    }
+
+    private void triggerNecroCutscene(){
+        if(necroCutsceneActive || necroCutsceneDone) return;
+        necroCutsceneActive = true;
+        necroCutsceneAwaitingContinue = false;
+        necroCutsceneStartMs = System.currentTimeMillis();
+        lastMessage = "The relics shriek—something dire arrives.";
+        player.setInvulnerable(true);
+    }
+
+    private void completeNecroCutscene(){
+        necroCutsceneActive = false;
+        necroCutsceneAwaitingContinue = false;
+        necroCutsceneDone = true;
+        player.setInvulnerable(false);
+        lastMessage = "A necromancer tears through reality!";
+        spawnNecroNearPlayer();
     }
 
     private void handleMonsterSpawns(){
@@ -1064,7 +1396,7 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
             if(base[y][x]==0) continue;
             if(mapLoader.isNoSpawn(x,y)) continue;
             if(world.isBlocked(x,y)) continue;
-            if(x==player.getX() && y==player.getY()) continue;
+            if(x==player.getTileX() && y==player.getTileY()) continue;
             if(hasDrop(x,y)) continue;
             if(monsterAt(x,y)) continue;
 
@@ -1088,6 +1420,22 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         }
     }
 
+    private void spawnGolemHuntersNearPlayer(int count){
+        if(golemWalkFrames == null || golemWalkFrames.length == 0) return;
+        java.util.Set<String> used = new java.util.HashSet<>();
+        for(int i=0;i<count;i++){
+            Point spot = pickGolemSpotNearPlayer(4, 10, used);
+            if(spot == null) break;
+            used.add(spot.x+","+spot.y);
+            Monster m = new Monster(spot.x + 0.5f, spot.y + 0.5f, golemWalkFrames, speedFor(MonsterType.GOLEM), MonsterType.GOLEM);
+            m.walkFrames = golemWalkFrames;
+            m.idleFrames = (golemIdleFrames != null && golemIdleFrames.length > 0) ? golemIdleFrames : golemWalkFrames;
+            m.attackFrames = golemAttackFrames;
+            m.facingRight = player.getTileX() >= m.x;
+            monsters.add(m);
+        }
+    }
+
     private boolean spawnAwakeningType(MonsterType type){
         Point spot = pickAwakeningSpot();
         if(spot == null) return false;
@@ -1100,8 +1448,8 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     private Point pickAwakeningSpot(){
         if(mapLoader == null || mapLoader.getVisualLayers().isEmpty()) return null;
         int[][] base = mapLoader.getVisualLayers().get(0);
-        int px = player.getX();
-        int py = player.getY();
+        int px = player.getTileX();
+        int py = player.getTileY();
         int minR = 5;
         int maxR = 10;
         for(int tries=0; tries<220; tries++){
@@ -1118,6 +1466,105 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
             if(hasDrop(x,y)) continue;
             if(x==px && y==py) continue;
             if(isDiscovered(x,y)) return new Point(x,y);
+        }
+        return null;
+    }
+
+    private Point pickGolemSpotNearPlayer(int minR, int maxR, java.util.Set<String> disallow){
+        if(mapLoader == null || mapLoader.getVisualLayers().isEmpty()) return null;
+        int[][] base = mapLoader.getLayer("tile layer 1");
+        if(base == null) return null;
+        int px = player.getTileX();
+        int py = player.getTileY();
+        for(int tries=0; tries<260; tries++){
+            int dx = rand.nextInt(maxR*2+1) - maxR;
+            int dy = rand.nextInt(maxR*2+1) - maxR;
+            if(Math.abs(dx)+Math.abs(dy) < minR) continue;
+            int x = px + dx;
+            int y = py + dy;
+            if(disallow != null && disallow.contains(x+","+y)) continue;
+            if(!world.inBounds(x,y)) continue;
+            if(y < 0 || y >= base.length || x < 0 || x >= base[0].length) continue;
+            if(base[y][x]==0) continue;
+            if(world.isBlocked(x,y)) continue;
+            if(mapLoader.isNoSpawn(x,y)) continue;
+            if(mapLoader.hasTile("walls", x, y)) continue;
+            if(mapLoader.hasTile("wall_vert", x, y)) continue;
+            if(mapLoader.hasTile("objects", x, y)) continue;
+            if(mapLoader.hasTile("extra", x, y)) continue;
+            if(monsterAt(x,y)) continue;
+            if(hasDrop(x,y)) continue;
+            if(!isDiscovered(x,y)) continue;
+            return new Point(x,y);
+        }
+        return null;
+    }
+
+    private Point pickGolemSpot(){
+        if(mapLoader == null || mapLoader.getVisualLayers().isEmpty()) return null;
+        int[][] base = mapLoader.getVisualLayers().get(0);
+        int px = player.getTileX();
+        int py = player.getTileY();
+        int minR = 6;
+        int maxR = 12;
+        for(int tries=0; tries<260; tries++){
+            int dx = rand.nextInt(maxR*2+1) - maxR;
+            int dy = rand.nextInt(maxR*2+1) - maxR;
+            if(Math.abs(dx)+Math.abs(dy) < minR) continue;
+            int x = px + dx;
+            int y = py + dy;
+            if(!world.inBounds(x,y)) continue;
+            if(base[y][x]==0) continue;
+            if(world.isBlocked(x,y)) continue;
+            if(mapLoader.isNoSpawn(x,y)) continue;
+            if(monsterAt(x,y)) continue;
+            if(hasDrop(x,y)) continue;
+            if(!isDiscovered(x,y)) continue;
+            return new Point(x,y);
+        }
+        return null;
+    }
+
+    private void spawnNecroNearPlayer(){
+        if(necroWalkFrames == null || necroWalkFrames.length == 0) return;
+        Point spot = pickNecroSpotNearPlayer(6, 12);
+        if(spot == null){
+            spot = new Point(player.getTileX()+6, player.getTileY());
+        }
+        Monster necro = new Monster(spot.x + 0.5f, spot.y + 0.5f, necroWalkFrames, speedFor(MonsterType.NECRO), MonsterType.NECRO);
+        necro.walkFrames = necroWalkFrames;
+        necro.idleFrames = necroIdleFrames;
+        necro.attackFrames = necroAttackFrames;
+        necro.closeAttackFrames = necroSpawnFrames;
+        necro.walkFrames = null; // no walk animation; stay on idle/attack
+        necro.facingRight = player.getTileX() >= necro.x;
+        necro.headingX = necro.facingRight ? 1f : -1f;
+        necro.headingY = 0f;
+        necro.orbitAngleRad = (float)Math.atan2(necro.y - player.getTileY(), necro.x - player.getTileX());
+        necro.orbitDir = rand.nextBoolean() ? 1 : -1;
+        necro.nextOrbitFlipMs = System.currentTimeMillis() + 1800L + rand.nextInt(1400);
+        necro.nextAttackReadyMs = System.currentTimeMillis() + 1200L; // prevent instant spam on spawn
+        monsters.add(necro);
+    }
+
+    private Point pickNecroSpotNearPlayer(int minR, int maxR){
+        if(mapLoader == null || mapLoader.getVisualLayers().isEmpty()) return null;
+        int[][] base = mapLoader.getVisualLayers().get(0);
+        int px = player.getTileX();
+        int py = player.getTileY();
+        for(int tries=0; tries<280; tries++){
+            int dx = rand.nextInt(maxR*2+1) - maxR;
+            int dy = rand.nextInt(maxR*2+1) - maxR;
+            if(Math.abs(dx)+Math.abs(dy) < minR) continue;
+            int x = px + dx;
+            int y = py + dy;
+            if(!world.inBounds(x,y)) continue;
+            if(base[y][x]==0) continue;
+            if(mapLoader.isNoSpawn(x,y)) continue;
+            if(hasDrop(x,y)) continue;
+            if(monsterAt(x,y)) continue;
+            if(!isDiscovered(x,y)) continue;
+            return new Point(x,y);
         }
         return null;
     }
@@ -1146,6 +1593,8 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         switch(t){
             case EYE: return 2.7f; // slightly under player speed for 0.9x pacing
             case JELLY: return 2.7f;
+            case GOLEM: return 5.0f; // match player speed (~5 tiles/s)
+            case NECRO: return 18.0f; // even faster to ensure overtaking
             default: return 2.7f;
         }
     }
@@ -1173,16 +1622,39 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         float tilesPerTick = mTickTiles();
         for(Monster m: monsters){
             m.moveBuffer += tilesPerTick * m.speedTilesPerSec;
+
+            if(m.type == MonsterType.NECRO){
+                handleNecroStep(m, tilesPerTick);
+                continue;
+            }
+
             int guard = 0;
             while(m.moveBuffer >= 1f && guard < 4){
                 guard++;
                 int cx = (int)Math.floor(m.x);
                 int cy = (int)Math.floor(m.y);
-                int dx = Integer.compare(player.getX(), cx);
-                int dy = Integer.compare(player.getY(), cy);
+                int dx = Integer.compare(player.getTileX(), cx);
+                int dy = Integer.compare(player.getTileY(), cy);
+
+                if(m.type == MonsterType.GOLEM){
+                    if(dx != 0){
+                        m.facingRight = dx > 0;
+                    } else {
+                        m.facingRight = player.getTileX() >= m.x;
+                    }
+                    double dist = Math.hypot(player.getTileX() - cx, player.getTileY() - cy);
+                    if(dist <= 1.2){
+                        if(m.attackFrames != null && m.attackAnimStartMs < 0L){
+                            m.attackAnimStartMs = System.currentTimeMillis();
+                        }
+                        m.moveBuffer = 0f;
+                        m.movedLastTick = false;
+                        break;
+                    }
+                }
 
                 boolean moved = false;
-                if(Math.abs(player.getX() - cx) >= Math.abs(player.getY() - cy)){
+                if(Math.abs(player.getTileX() - cx) >= Math.abs(player.getTileY() - cy)){
                     moved = attemptMonsterStep(m, cx+dx, cy);
                     if(!moved && dy!=0){
                         moved = attemptMonsterStep(m, cx, cy+dy);
@@ -1196,10 +1668,108 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
 
                 if(moved){
                     m.moveBuffer -= 1f;
+                    m.movedLastTick = true;
                 } else {
                     m.moveBuffer = 0f;
+                    m.movedLastTick = false;
+                }
+
+                if(m.type == MonsterType.GOLEM){
+                    m.facingRight = player.getTileX() >= m.x;
                 }
             }
+        }
+    }
+
+    private void handleNecroStep(Monster necro, float tilesPerTick){
+        double dx = player.getTileX() - necro.x;
+        double dy = player.getTileY() - necro.y;
+        double dist = Math.hypot(dx, dy);
+        long now = System.currentTimeMillis();
+
+        // Orbit around the player with smooth acceleration/deceleration and periodic direction flips.
+        if(now >= necro.nextOrbitFlipMs){
+            if(rand.nextDouble() < 0.35){
+                necro.orbitDir *= -1;
+            }
+            necro.nextOrbitFlipMs = now + 1600L + rand.nextInt(1400);
+        }
+
+        // Advance orbit angle
+        float orbitSpeed = 7.2f; // radians per second
+        necro.orbitAngleRad += necro.orbitDir * orbitSpeed * tilesPerTick;
+
+        float orbitRadius = 3.0f;
+        necro.targetX = player.getTileX() + (float)Math.cos(necro.orbitAngleRad) * orbitRadius;
+        necro.targetY = player.getTileY() + (float)Math.sin(necro.orbitAngleRad) * orbitRadius;
+
+        double tdx = necro.targetX - necro.x;
+        double tdy = necro.targetY - necro.y;
+        double tdist = Math.hypot(tdx, tdy);
+        if(tdist > 1e-4){
+            double dirX = tdx / tdist;
+            double dirY = tdy / tdist;
+
+            // Acceleration toward target with gentle drag for decel
+            float accel = 24.0f; // tiles/s^2
+            float drag = 0.92f; // velocity retention per tick to sustain speed
+            necro.velX = (float)(necro.velX * drag + accel * dirX * tilesPerTick);
+            necro.velY = (float)(necro.velY * drag + accel * dirY * tilesPerTick);
+
+            // Clamp speed to max
+            double speed = Math.hypot(necro.velX, necro.velY);
+            double maxSpeed = necro.speedTilesPerSec;
+            if(speed > maxSpeed && speed > 1e-4){
+                necro.velX *= maxSpeed / speed;
+                necro.velY *= maxSpeed / speed;
+            }
+
+            necro.x += necro.velX * tilesPerTick;
+            necro.y += necro.velY * tilesPerTick;
+            necro.facingRight = necro.velX >= 0;
+            necro.movedLastTick = Math.hypot(necro.velX, necro.velY) > 0.1;
+        } else {
+            necro.velX *= 0.85f;
+            necro.velY *= 0.85f;
+            necro.movedLastTick = Math.hypot(necro.velX, necro.velY) > 0.1;
+        }
+
+        boolean animating = (necro.attackAnimStartMs > 0L) || (necro.closeAttackAnimStartMs > 0L);
+        boolean readyToCast = !animating && now >= necro.nextAttackReadyMs;
+        boolean closeRange = dist < 2.8 && necro.closeAttackFrames != null;
+        if(readyToCast){
+            necro.nextAttackReadyMs = now + (closeRange ? 2400L : 2000L);
+            if(closeRange){
+                necro.closeAttackAnimStartMs = now;
+                if(necroAttackFxFrames != null){
+                    // Short, slower lunge toward the player
+                    double elen = Math.max(1e-4, Math.hypot(dx, dy));
+                    float ndx = (float)(dx/elen);
+                    float ndy = (float)(dy/elen);
+                    float projSpeed = 8.0f;
+                    spookyBlasts.add(new AttackEffect(necro.x, necro.y, ndx*projSpeed, ndy*projSpeed, necroAttackFxFrames, ndx>=0));
+                }
+            } else if(dist < 8.2 && necro.attackFrames != null){
+                necro.attackAnimStartMs = now;
+                if(necroAttackFxFrames != null){
+                    double elen = Math.max(1e-4, Math.hypot(dx, dy));
+                    float ndx = (float)(dx/elen);
+                    float ndy = (float)(dy/elen);
+                    float projSpeed = 10.5f;
+                    spookyBlasts.add(new AttackEffect(necro.x, necro.y, ndx*projSpeed, ndy*projSpeed, necroAttackFxFrames, ndx>=0));
+                }
+            } else {
+                // Too far; wait and try again soon
+                necro.nextAttackReadyMs = now + 700L;
+            }
+        }
+    }
+
+    private void updateNecroOnly(){
+        float tilesPerTick = mTickTiles();
+        for(Monster m : monsters){
+            if(m.type != MonsterType.NECRO) continue;
+            handleNecroStep(m, tilesPerTick);
         }
     }
 
@@ -1208,6 +1778,11 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     }
 
     private boolean attemptMonsterStep(Monster m, int tx, int ty){
+        if(m.type == MonsterType.NECRO){
+            m.x = tx + 0.5f;
+            m.y = ty + 0.5f;
+            return true;
+        }
         if(!canWalk(tx, ty)) return false;
         m.x = tx + 0.5f;
         m.y = ty + 0.5f;
@@ -1215,10 +1790,29 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     }
 
     private void checkMonsterContacts(){
-        int px = player.getX();
-        int py = player.getY();
+        int px = player.getTileX();
+        int py = player.getTileY();
         long now = System.currentTimeMillis();
+
+        // Only attack effects hurt from necro; use radius overlap so fast projectiles still hit
+        for(AttackEffect blast : new java.util.ArrayList<>(spookyBlasts)){
+            double dx = blast.x - player.getTileX();
+            double dy = blast.y - player.getTileY();
+            double dist = Math.hypot(dx, dy);
+            if(dist <= 0.45){ // tightened radius
+                if(now - lastDamageMs >= damageCooldownMs){
+                    lastDamageMs = now;
+                    hurtAnimStartMs = now;
+                    player.takeDamage(30);
+                    lastMessage = "Necrotic blades rip through you!";
+                    checkIfDone();
+                }
+                break;
+            }
+        }
+
         for(Monster m: monsters){
+            if(m.type == MonsterType.NECRO) continue; // necro contact is ignored; effect handles damage
             int mx = (int)Math.floor(m.x);
             int my = (int)Math.floor(m.y);
             if(mx==px && my==py){
@@ -1226,12 +1820,14 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
                     lastDamageMs = now;
                     hurtAnimStartMs = now;
                     int dmg;
-                    if(m.type == MonsterType.EYE || m.type == MonsterType.JELLY){
+                    if(m.type == MonsterType.GOLEM){
+                        dmg = 22;
+                    } else if(m.type == MonsterType.EYE || m.type == MonsterType.JELLY){
                         dmg = 15;
                     } else {
                         dmg = 10;
                     }
-                    player.nickHearts(dmg);
+                    player.takeDamage(dmg);
                     knockPlayerFrom(mx,my);
                     lastMessage = "You are struck by a lurking horror!";
                     checkIfDone();
@@ -1242,63 +1838,112 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     }
 
     private void knockPlayerFrom(int mx,int my){
-        int dx = Integer.compare(player.getX(), mx);
-        int dy = Integer.compare(player.getY(), my);
-        int targetX = player.getX() + dx;
-        int targetY = player.getY() + dy;
+        int dx = Integer.compare(player.getTileX(), mx);
+        int dy = Integer.compare(player.getTileY(), my);
+        int targetX = player.getTileX() + dx;
+        int targetY = player.getTileY() + dy;
         if(canWalk(targetX, targetY)){
-            player.dropAt(targetX, targetY);
+            player.setPosition(targetX, targetY);
             peelFog(targetX, targetY);
         }
     }
 
-    private void drawMonsters(Graphics2D g2, int viewLeft, int viewTop, int tileSize, int viewWidthTiles, int viewHeightTiles){
-        for(Monster m: monsters){
-            int gx = (int)Math.floor(m.x);
-            int gy = (int)Math.floor(m.y);
+    private void drawMonsters(Graphics2D monsterCrayon, int viewLeft, int viewTop, int tileSize, int viewWidthTiles, int viewHeightTiles){
+        for(Monster beast: monsters){
+            int gridX = (int)Math.floor(beast.x);
+            int gridY = (int)Math.floor(beast.y);
+            if(gridX < viewLeft || gridX >= viewLeft + viewWidthTiles) continue;
+            if(gridY < viewTop || gridY >= viewTop + viewHeightTiles) continue;
+
+            double canvasX = (beast.x - viewLeft) * tileSize;
+            double canvasY = (beast.y - viewTop) * tileSize;
+
+            BufferedImage facePic = beast.pickFrame();
+            if(facePic != null){
+                double squishRatio = facePic.getHeight() / (double)Math.max(1, facePic.getWidth());
+                double blobbyScale;
+                int spriteWide;
+                int spriteTall;
+                if(beast.type == MonsterType.NECRO){
+                    blobbyScale = 8.0; // fixed necromancer size
+                    spriteWide = (int)Math.round(tileSize * blobbyScale);
+                    spriteTall = spriteWide; // lock height to width to prevent frame-based size pops
+                    // center all frames identically to avoid idle/attack size pops
+                    double maxDim = Math.max(facePic.getWidth(), facePic.getHeight());
+                    double normW = facePic.getWidth() / Math.max(1.0, maxDim);
+                    double normH = facePic.getHeight() / Math.max(1.0, maxDim);
+                    spriteWide = (int)Math.round(tileSize * blobbyScale * normW);
+                    spriteTall = (int)Math.round(tileSize * blobbyScale * normH);
+                } else if(beast.type == MonsterType.GOLEM){
+                    blobbyScale = 3.0;
+                    spriteWide = (int)Math.round(tileSize * blobbyScale);
+                    spriteTall = (int)Math.round(spriteWide * squishRatio);
+                } else {
+                    blobbyScale = 0.88;
+                    spriteWide = (int)Math.round(tileSize * blobbyScale);
+                    spriteTall = (int)Math.round(spriteWide * squishRatio);
+                }
+                int paintX = (int)Math.round(canvasX - spriteWide/2.0);
+                int paintY = topPad + (int)Math.round(canvasY - spriteTall/2.0);
+
+                int fogShade = fogAlphaForTile(gridX, gridY);
+                double purpleMood = moodHaziness(gridX, gridY);
+                float fogFade = (float)(1.0 - Math.min(0.82, fogShade/255.0 * 0.9));
+                float moodFade = (float)(1.0 - Math.min(0.55, purpleMood * 0.7));
+                float finalFade = Math.max(0f, Math.min(1f, fogFade * moodFade));
+
+                if(finalFade < 0.999f){
+                    java.awt.image.RescaleOp rescale = new java.awt.image.RescaleOp(
+                            new float[]{finalFade, finalFade, finalFade, 1f},
+                            new float[]{0f,0f,0f,0f}, null);
+                    BufferedImage ghostPic = new BufferedImage(facePic.getWidth(), facePic.getHeight(), BufferedImage.TYPE_INT_ARGB);
+                    Graphics2D ghostPen = ghostPic.createGraphics();
+                    ghostPen.drawImage(facePic, 0, 0, null);
+                    ghostPen.dispose();
+                    ghostPic = rescale.filter(ghostPic, null);
+                    drawFlipped(monsterCrayon, ghostPic, paintX, paintY, spriteWide, spriteTall, beast.facingRight);
+                } else {
+                    drawFlipped(monsterCrayon, facePic, paintX, paintY, spriteWide, spriteTall, beast.facingRight);
+                }
+            }
+        }
+
+        // draw necro attack effects
+        java.util.List<AttackEffect> expired = new java.util.ArrayList<>();
+        for(AttackEffect fx : spookyBlasts){
+            if(fx.expired()){
+                expired.add(fx);
+                continue;
+            }
+            fx.x += fx.dx * (tickMs/1000f);
+            fx.y += fx.dy * (tickMs/1000f);
+
+            int gx = (int)Math.floor(fx.x);
+            int gy = (int)Math.floor(fx.y);
             if(gx < viewLeft || gx >= viewLeft + viewWidthTiles) continue;
             if(gy < viewTop || gy >= viewTop + viewHeightTiles) continue;
 
-            double screenX = (m.x - viewLeft) * tileSize;
-            double screenY = (m.y - viewTop) * tileSize;
-
-            BufferedImage frame = m.pickFrame();
+            double screenX = (fx.x - viewLeft) * tileSize;
+            double screenY = (fx.y - viewTop) * tileSize;
+            BufferedImage frame = fx.pickFrame();
             if(frame != null){
                 double ratio = frame.getHeight() / (double)Math.max(1, frame.getWidth());
-                double scale = 0.88;
+                double scale = 9.5; // even larger for visibility
                 int sw = (int)Math.round(tileSize * scale);
                 int sh = (int)Math.round(sw * ratio);
                 int dx = (int)Math.round(screenX - sw/2.0);
                 int dy = topPad + (int)Math.round(screenY - sh/2.0);
-
-                int fog = fogAlphaForTile(gx, gy);
-                double corr = moodHaziness(gx, gy);
-                float factorFog = (float)(1.0 - Math.min(0.82, fog/255.0 * 0.9));
-                float factorCorr = (float)(1.0 - Math.min(0.55, corr * 0.7));
-                float factor = Math.max(0f, Math.min(1f, factorFog * factorCorr));
-
-                if(factor < 0.999f){
-                    java.awt.image.RescaleOp op = new java.awt.image.RescaleOp(
-                            new float[]{factor, factor, factor, 1f},
-                            new float[]{0f,0f,0f,0f}, null);
-                    BufferedImage scaled = new BufferedImage(frame.getWidth(), frame.getHeight(), BufferedImage.TYPE_INT_ARGB);
-                    Graphics2D ig = scaled.createGraphics();
-                    ig.drawImage(frame, 0, 0, null);
-                    ig.dispose();
-                    scaled = op.filter(scaled, null);
-                    drawFlipped(g2, scaled, dx, dy, sw, sh, m.facingRight);
-                } else {
-                    drawFlipped(g2, frame, dx, dy, sw, sh, m.facingRight);
-                }
+                drawFlipped(monsterCrayon, frame, dx, dy, sw, sh, fx.facingRight);
             }
         }
+        spookyBlasts.removeAll(expired);
     }
 
-    private void drawFlipped(Graphics2D g2, BufferedImage img, int x, int y, int w, int h, boolean facingRight){
-        if(facingRight){
-            g2.drawImage(img, x, y, w, h, null);
+    private void drawFlipped(Graphics2D flipPen, BufferedImage spritePic, int paintX, int paintY, int paintW, int paintH, boolean lookRight){
+        if(lookRight){
+            flipPen.drawImage(spritePic, paintX, paintY, paintW, paintH, null);
         } else {
-            g2.drawImage(img, x + w, y, -w, h, null);
+            flipPen.drawImage(spritePic, paintX + paintW, paintY, -paintW, paintH, null);
         }
     }
 
@@ -1315,31 +1960,31 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         g2.setPaint(old);
 
         g2.setFont(new Font("Garamond", Font.BOLD, 32));
-        String l1 = "The first relic has been obtained.";
-        String l2 = "Something slumbering is stirring...";
-        FontMetrics fm = g2.getFontMetrics();
-        int cy = h/2 - fm.getHeight();
-        int x1 = (w - fm.stringWidth(l1))/2;
+        String lineMain = "The first relic has been obtained.";
+        String lineSub = "Something slumbering is stirring...";
+        FontMetrics textMetrics = g2.getFontMetrics();
+        int centerY = h/2 - textMetrics.getHeight();
+        int lineMainX = (w - textMetrics.stringWidth(lineMain))/2;
         g2.setColor(new Color(235,230,222));
-        g2.drawString(l1, x1, cy);
-        int x2 = (w - fm.stringWidth(l2))/2;
-        g2.drawString(l2, x2, cy + fm.getHeight()+12);
+        g2.drawString(lineMain, lineMainX, centerY);
+        int lineSubX = (w - textMetrics.stringWidth(lineSub))/2;
+        g2.drawString(lineSub, lineSubX, centerY + textMetrics.getHeight()+12);
 
         g2.setFont(new Font("Consolas", Font.BOLD, 17));
         String warn = "The map will start getting corrupted. Collect all the relics before it's too late.";
-        FontMetrics wf = g2.getFontMetrics();
-        int wx = (w - wf.stringWidth(warn))/2;
-        int wy = h - 70;
+        FontMetrics warnMetrics = g2.getFontMetrics();
+        int warnX = (w - warnMetrics.stringWidth(warn))/2;
+        int warnY = h - 70;
         g2.setColor(new Color(210,72,72,240));
-        g2.drawString(warn, wx, wy);
+        g2.drawString(warn, warnX, warnY);
 
         String prompt = firstRelicCutsceneAwaitingContinue ? "Click or press any key to steel yourself." : "...";
         g2.setFont(new Font("Garamond", Font.BOLD, 18));
-        FontMetrics pf = g2.getFontMetrics();
-        int px = (w - pf.stringWidth(prompt))/2;
-        int py = h - 36;
+        FontMetrics promptMetrics = g2.getFontMetrics();
+        int promptX = (w - promptMetrics.stringWidth(prompt))/2;
+        int promptY = h - 36;
         g2.setColor(new Color(240,234,224,230));
-        g2.drawString(prompt, px, py);
+        g2.drawString(prompt, promptX, promptY);
     }
 
     private void drawSecondRelicCutsceneOverlay(Graphics2D g2){
@@ -1355,32 +2000,32 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         g2.setPaint(old);
 
         g2.setFont(new Font("Garamond", Font.BOLD, 34));
-        String l1 = "The second relic trembles.";
-        String l2 = "Something awakens...";
-        FontMetrics fm = g2.getFontMetrics();
-        int cy = h/2 - fm.getHeight();
-        int x1 = (w - fm.stringWidth(l1))/2;
+        String lineMain = "The second relic trembles.";
+        String lineSub = "Something awakens...";
+        FontMetrics textMetrics = g2.getFontMetrics();
+        int centerY = h/2 - textMetrics.getHeight();
+        int lineMainX = (w - textMetrics.stringWidth(lineMain))/2;
         g2.setColor(new Color(255,236,228));
-        g2.drawString(l1, x1, cy);
-        int x2 = (w - fm.stringWidth(l2))/2;
+        g2.drawString(lineMain, lineMainX, centerY);
+        int lineSubX = (w - textMetrics.stringWidth(lineSub))/2;
         g2.setColor(new Color(255,90,110));
-        g2.drawString(l2, x2, cy + fm.getHeight()+14);
+        g2.drawString(lineSub, lineSubX, centerY + textMetrics.getHeight()+14);
 
         g2.setFont(new Font("Consolas", Font.BOLD, 17));
         String warn = "The corruption quickens. It will spread faster now.";
-        FontMetrics wf = g2.getFontMetrics();
-        int wx = (w - wf.stringWidth(warn))/2;
-        int wy = h - 78;
+        FontMetrics warnMetrics = g2.getFontMetrics();
+        int warnX = (w - warnMetrics.stringWidth(warn))/2;
+        int warnY = h - 78;
         g2.setColor(new Color(230,70,90,245));
-        g2.drawString(warn, wx, wy);
+        g2.drawString(warn, warnX, warnY);
 
         String prompt = secondRelicCutsceneAwaitingContinue ? "Click or press any key to face it." : "...";
         g2.setFont(new Font("Garamond", Font.BOLD, 19));
-        FontMetrics pf = g2.getFontMetrics();
-        int px = (w - pf.stringWidth(prompt))/2;
-        int py = h - 40;
+        FontMetrics promptMetrics = g2.getFontMetrics();
+        int promptX = (w - promptMetrics.stringWidth(prompt))/2;
+        int promptY = h - 40;
         g2.setColor(new Color(240,234,224,235));
-        g2.drawString(prompt, px, py);
+        g2.drawString(prompt, promptX, promptY);
     }
 
     private void drawThirdRelicCutsceneOverlay(Graphics2D g2){
@@ -1395,32 +2040,74 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         g2.setPaint(old);
 
         g2.setFont(new Font("Garamond", Font.BOLD, 36));
-        String l1 = "The third relic shatters the silence.";
-        String l2 = "Blades sing in the dark...";
-        FontMetrics fm = g2.getFontMetrics();
-        int cy = h/2 - fm.getHeight();
-        int x1 = (w - fm.stringWidth(l1))/2;
+        String lineMain = "The third relic shatters the silence.";
+        String lineSub = "Blades sing in the dark...";
+        FontMetrics textMetrics = g2.getFontMetrics();
+        int centerY = h/2 - textMetrics.getHeight();
+        int lineMainX = (w - textMetrics.stringWidth(lineMain))/2;
         g2.setColor(new Color(255,240,232));
-        g2.drawString(l1, x1, cy);
-        int x2 = (w - fm.stringWidth(l2))/2;
+        g2.drawString(lineMain, lineMainX, centerY);
+        int lineSubX = (w - textMetrics.stringWidth(lineSub))/2;
         g2.setColor(new Color(255,110,140));
-        g2.drawString(l2, x2, cy + fm.getHeight()+16);
+        g2.drawString(lineSub, lineSubX, centerY + textMetrics.getHeight()+16);
 
         g2.setFont(new Font("Consolas", Font.BOLD, 17));
         String warn = "The corruption peaks. Brace yourself.";
-        FontMetrics wf = g2.getFontMetrics();
-        int wx = (w - wf.stringWidth(warn))/2;
-        int wy = h - 86;
+        FontMetrics warnMetrics = g2.getFontMetrics();
+        int warnX = (w - warnMetrics.stringWidth(warn))/2;
+        int warnY = h - 86;
         g2.setColor(new Color(240,70,90,245));
-        g2.drawString(warn, wx, wy);
+        g2.drawString(warn, warnX, warnY);
 
         String prompt = thirdRelicCutsceneAwaitingContinue ? "Click or press any key to brace for the blade." : "...";
         g2.setFont(new Font("Garamond", Font.BOLD, 20));
-        FontMetrics pf = g2.getFontMetrics();
-        int px = (w - pf.stringWidth(prompt))/2;
-        int py = h - 44;
+        FontMetrics promptMetrics = g2.getFontMetrics();
+        int promptX = (w - promptMetrics.stringWidth(prompt))/2;
+        int promptY = h - 44;
         g2.setColor(new Color(240,234,224,240));
-        g2.drawString(prompt, px, py);
+        g2.drawString(prompt, promptX, promptY);
+    }
+
+    private void drawNecroCutsceneOverlay(Graphics2D g2){
+        int w = getWidth();
+        int h = getHeight();
+        long elapsed = System.currentTimeMillis() - necroCutsceneStartMs;
+        float flash = (float)(0.5 + 0.5*Math.sin(elapsed/60.0));
+
+        g2.setColor(new Color(120,0,0,230));
+        g2.fillRect(0,0,w,h);
+        g2.setColor(new Color(0,0,0,180));
+        g2.fillRect(0,0,w,h);
+
+        for(int i=0;i<8;i++){
+            int alpha = (int)(80 + 120*Math.sin(elapsed/90.0 + i));
+            g2.setColor(new Color(200,30,30, Math.max(0, Math.min(255, alpha))));
+            int pad = 12 + i*8;
+            g2.drawRect(pad, pad, w-pad*2, h-pad*2);
+        }
+
+        g2.setFont(new Font("Consolas", Font.BOLD, 38));
+        String warning = "THE NECROMANCER HUNTS. FLEE.";
+        FontMetrics fm = g2.getFontMetrics();
+        int wx = (w - fm.stringWidth(warning))/2;
+        int wy = h/2 - fm.getHeight();
+        g2.setColor(new Color(255, 240, 240, 240));
+        g2.drawString(warning, wx, wy);
+
+        g2.setFont(new Font("Consolas", Font.BOLD, 24));
+        String sub = "All relics gathered. The exit is your only hope.";
+        int sx = (w - g2.getFontMetrics().stringWidth(sub))/2;
+        g2.setColor(new Color(255, 80, 80, 230));
+        g2.drawString(sub, sx, wy + 44);
+
+        g2.setFont(new Font("Garamond", Font.BOLD, 22));
+        String prompt = necroCutsceneAwaitingContinue ? "Click or press any key to face the doom." : "...";
+        int px = (w - g2.getFontMetrics().stringWidth(prompt))/2;
+        g2.setColor(new Color(255, 220, 220, 235));
+        g2.drawString(prompt, px, h - 40);
+
+        g2.setColor(new Color(255, 0, 0, (int)(120*flash)));
+        g2.fillRect(0,0,w,h);
     }
 
     private int fogAlphaForTile(int worldX, int worldY){
@@ -1428,84 +2115,106 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
             return 235;
         }
 
-        double dist = Math.hypot(worldX - player.getX(), worldY - player.getY());
+        double fogGap = Math.hypot(worldX - player.getTileX(), worldY - player.getTileY());
 
-        if(dist <= clearRing){
+        if(fogGap <= clearRing){
             return 0;
         }
 
-        double span = Math.max(1e-3,(fogEdge-clearRing));
-        double t = (dist-clearRing)/span;
-        if(t > 1.0) t = 1.0;
-        if(t < 0.0) t = 0.0;
+        double fogSpan = Math.max(1e-3,(fogEdge-clearRing));
+        double fogBlend = (fogGap-clearRing)/fogSpan;
+        if(fogBlend > 1.0) fogBlend = 1.0;
+        if(fogBlend < 0.0) fogBlend = 0.0;
 
-        double smooth = t*t*(3-2*t);
-        int baseAlpha = 18;
-        int maxAlpha  = 170;
-        return (int)Math.round(baseAlpha + (maxAlpha-baseAlpha) * smooth);
+        double fogSquish = fogBlend*fogBlend*(3-2*fogBlend);
+        int fogSoft = 18;
+        int fogThick  = 170;
+        return (int)Math.round(fogSoft + (fogThick-fogSoft) * fogSquish);
     }
 
     private double moodHaziness(int worldX,int worldY){
         if(corruptionStartMs < 0L){
             return 0.0;
         }
-        long elapsed = System.currentTimeMillis() - corruptionStartMs;
-        double creep = Math.min(1.0, elapsed / (double)corruptionSpanMs);
+        long spookyClock = System.currentTimeMillis() - corruptionStartMs;
+        double creepJuice = Math.min(1.0, spookyClock / (double)corruptionSpanMs);
 
-        double upwardBias = 1.0 - (worldY / Math.max(1.0, (world.getHeight()-1)));
-        double staticJitter = (Util.scrappyPick(worldX, worldY, 7, 100) - 50) / 520.0; // small, fixed per tile
+        double topTilt = 1.0 - (worldY / Math.max(1.0, (world.getHeight()-1)));
+        double wiggleNoise = (Util.scrappyPick(worldX, worldY, 7, 100) - 50) / 520.0; // small, fixed per tile
 
-        double threshold = clamp01(upwardBias + staticJitter + 0.03);
+        double spookGate = clamp01(topTilt + wiggleNoise + 0.03);
 
-        double spread = 0.45;
-        double strength = clamp01((creep - threshold) / spread);
-        double eased = strength*strength * (3 - 2*strength);
-        return eased;
+        double spill = 0.45;
+        double purplePunch = clamp01((creepJuice - spookGate) / spill);
+        double softenedPunch = purplePunch*purplePunch * (3 - 2*purplePunch);
+        return softenedPunch;
     }
 
     private void applyCorruptionDamage(){
         if(corruptionStartMs < 0L) return;
         if(player == null) return;
         if(player.getHearts() <= 0) return;
-        if(player.getX() < 0 || player.getY() < 0) return;
-        if(!world.inBounds(player.getX(), player.getY())) return;
+        if(player.getTileX() < 0 || player.getTileY() < 0) return;
+        if(!world.inBounds(player.getTileX(), player.getTileY())) return;
 
-        double strength = moodHaziness(player.getX(), player.getY());
-        boolean inCorruption = strength > 0.05;
+        double purpleHeat = moodHaziness(player.getTileX(), player.getTileY());
+        long scaryClock = System.currentTimeMillis();
 
-        if(!inCorruption){
+        boolean hoppingIn = !inCorruptionZone && purpleHeat >= corruptionEntryThreshold;
+        boolean hoppingOut = inCorruptionZone && purpleHeat < corruptionExitThreshold;
+
+        if(hoppingIn){
+            inCorruptionZone = true;
+            if(corruptionExposureStartMs < 0L){
+                corruptionExposureStartMs = scaryClock;
+                corruptionDamageRemainder = 0.0;
+            }
+            lastMessage = "The corruption crackles—get out now!";
+        } else if(hoppingOut){
+            inCorruptionZone = false;
             corruptionExposureStartMs = -1L;
             corruptionDamageRemainder = 0.0;
             return;
         }
 
-        long now = System.currentTimeMillis();
-        if(corruptionExposureStartMs < 0L){
-            corruptionExposureStartMs = now;
-            corruptionDamageRemainder = 0.0;
-            lastMessage = "The corruption crackles—get out now!";
+        if(!inCorruptionZone){
             return;
         }
 
-        long exposureMs = now - corruptionExposureStartMs;
-        if(exposureMs < 3000L) return; // grace period
+        if(corruptionExposureStartMs < 0L){
+            corruptionExposureStartMs = scaryClock;
+            corruptionDamageRemainder = 0.0;
+        }
 
-        double seconds = tickMs / 1000.0;
-        double dps = 6.0 + (strength * 24.0); // up to ~30 per second at darkest
-        corruptionDamageRemainder += dps * seconds;
+        long stayTime = scaryClock - corruptionExposureStartMs;
+        if(stayTime < 3000L){
+            lastMessage = "The corruption crackles—get out now!";
+            return; // grace period per entry
+        }
 
-        int whole = (int)Math.floor(corruptionDamageRemainder);
-        if(whole > 0){
-            corruptionDamageRemainder -= whole;
-            player.nickHearts(whole);
+        lastMessage = "The corruption crackles—get out now!";
+
+        double tickSeconds = tickMs / 1000.0;
+        double spicyFactor = Math.pow(clamp01(purpleHeat), 1.25);
+        double hurtPerSecond = 8.0 + (spicyFactor * 32.0); // heavier damage at higher intensity
+        corruptionDamageRemainder += hurtPerSecond * tickSeconds;
+
+        int wholeHurts = (int)Math.floor(corruptionDamageRemainder);
+        if(wholeHurts > 0){
+            corruptionDamageRemainder -= wholeHurts;
+            player.takeDamage(wholeHurts);
             lastMessage = "The corruption sears you!";
             checkIfDone();
         }
     }
 
-    private double clamp01(double v){
-        if(v < 0.0) return 0.0;
-        if(v > 1.0) return 1.0;
-        return v;
+    private double clamp01(double wiggly){
+        if(wiggly < 0.0) return 0.0;
+        if(wiggly > 1.0) return 1.0;
+        return wiggly;
+    }
+
+    private boolean tileIsCorrupted(int worldX, int worldY){
+        return moodHaziness(worldX, worldY) >= corruptionEntryThreshold;
     }
 }
