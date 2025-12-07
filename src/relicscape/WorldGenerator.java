@@ -1,10 +1,6 @@
 package relicscape;
 
 import java.util.Random;
-
-/**
- * Builds the initial world with biomes, clusters, relics, and shrine.
- */
 public class WorldGenerator {
 
     public void generate(World world, RelicManager relicManager, Random rand) {
@@ -13,7 +9,6 @@ public class WorldGenerator {
         int forestEnd = height / 3;
         int desertEnd = 2 * height / 3;
 
-        // Base ground per biome
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
                 if (y < forestEnd) {
@@ -26,7 +21,6 @@ public class WorldGenerator {
             }
         }
 
-        // Add clustered features per biome
         generateClusters(world, rand, TileType.TREE, 40, 3, 6, 0, forestEnd - 1);
         generateClusters(world, rand, TileType.ROCK, 18, 2, 4, 0, forestEnd - 1);
         generateClusters(world, rand, TileType.FLOWER, 35, 2, 5, 0, forestEnd - 1);
@@ -38,17 +32,14 @@ public class WorldGenerator {
         generateClusters(world, rand, TileType.RUIN_WALL, 30, 3, 6, desertEnd, height - 1);
         generateClusters(world, rand, TileType.RUBBLE, 35, 2, 5, desertEnd, height - 1);
 
-        // Carve horizontal & vertical paths around center
         carvePathHoriz(world, height / 2);
         carvePathVert(world, width / 2);
 
-        // Place shrine near center
         int shrineX = width / 2;
         int shrineY = height / 2;
         world.setTile(shrineX, shrineY, TileType.SHRINE);
-        relicManager.setShrinePosition(shrineX, shrineY);
+        relicManager.markShrine(shrineX, shrineY);
 
-        // Place relics: one in each biome band
         placeRelicInBand(world, relicManager, rand, 0, forestEnd - 1);
         placeRelicInBand(world, relicManager, rand, forestEnd, desertEnd - 1);
         placeRelicInBand(world, relicManager, rand, desertEnd, height - 1);

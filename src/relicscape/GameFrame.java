@@ -2,9 +2,6 @@ package relicscape;
 
 import java.awt.Frame;
 import javax.swing.JFrame;
-
-//Top-level window for Relicscape.
-
 public class GameFrame extends JFrame {
 
     public GameFrame() {
@@ -15,7 +12,7 @@ public class GameFrame extends JFrame {
         GamePanel panel = new GamePanel();
         setContentPane(panel);
         pack();
-        setExtendedState(JFrame.MAXIMIZED_BOTH); // maximize to fill screen
+        setExtendedState(JFrame.MAXIMIZED_BOTH);
         setLocationRelativeTo(null);
         setState(Frame.NORMAL);
         toFront();

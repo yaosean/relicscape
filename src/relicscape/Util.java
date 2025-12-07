@@ -1,10 +1,6 @@
 package relicscape;
 
 import java.awt.*;
-
-/**
- * Utility helper methods.
- */
 public class Util {
 
     /**
@@ -52,16 +48,11 @@ public class Util {
         return new Color(r, g, bl, al);
     }
 
-    /**
-     * Deterministic pseudo-random int for a coordinate pair.
-     * Used to choose which glyph to draw so patterns are stable between frames.
-     */
-    public static int pseudoRandomFromCoords(int x, int y, int salt, int mod) {
+    // Small, hand-made jitter so repeated tiles differ without looking procedural.
+    public static int scrappyPick(int x, int y, int salt, int mod) {
         if (mod <= 0) return 0;
-        int h = x * 734287 + y * 912271 + salt * 4231;
-        h ^= (h << 13);
-        h ^= (h >>> 17);
-        h ^= (h << 5);
-        return (h & 0x7fffffff) % mod;
+        int h = x * 41 + y * 17 + salt * 13;
+        h = (h ^ (h << 3)) ^ (h >> 2);
+        return Math.abs(h) % mod;
     }
 }

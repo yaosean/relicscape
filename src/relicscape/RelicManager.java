@@ -1,30 +1,29 @@
 package relicscape;
 
-//Relic collection & tracker
 public class RelicManager {
-    private int relicsToCollect;
-    private int relicsCollected;
+    private int goalPieces;
+    private int heldPieces;
     private int shrineX;
     private int shrineY;
 
-    public RelicManager(int relicsToCollect) {
-        this.relicsToCollect = relicsToCollect;
-        this.relicsCollected = 0;
+    public RelicManager(int goalPieces) {
+        this.goalPieces = goalPieces;
+        this.heldPieces = 0;
     }
 
-    public int getRelicsToCollect() { return relicsToCollect; }
+    public int goalCount() { return goalPieces; }
 
-    public int getRelicsCollected() { return relicsCollected; }
+    public int bagCount() { return heldPieces; }
 
-    public void collectRelic() { relicsCollected++; }
+    public void stashOne() { heldPieces++; }
 
-    public boolean hasAllRelics() { return relicsCollected >= relicsToCollect; }
+    public boolean doneGathering() { return heldPieces >= goalPieces; }
 
-    public void setShrinePosition(int x, int y) {
+    public void markShrine(int x, int y) {
         this.shrineX = x;
         this.shrineY = y;
     }
 
-    public int getShrineX() { return shrineX; }
-    public int getShrineY() { return shrineY; }
+    public int shrineX() { return shrineX; }
+    public int shrineY() { return shrineY; }
 }

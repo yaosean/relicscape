@@ -1,8 +1,5 @@
 package relicscape;
 
-/**
- * Represents the player in the world.
- */
 public class Player {
     private float x;
     private float y;
@@ -10,7 +7,7 @@ public class Player {
     private float targetY;
     private boolean moving = false;
     private int hp;
-    boolean pendingQuit = false; // used for ESC double-tap quit
+    boolean pendingQuit = false;
     private boolean invulnerable = false;
 
     public Player(float x, float y, int startingHp) {
@@ -26,7 +23,7 @@ public class Player {
     public float getFloatX() { return x; }
     public float getFloatY() { return y; }
 
-    public void setPosition(float x, float y) {
+    public void dropAt(float x, float y) {
         this.x = x;
         this.y = y;
         targetX = x;
@@ -67,14 +64,14 @@ public class Player {
         }
     }
 
-    public int getHp() { return hp; }
+    public int getHearts() { return hp; }
 
-    public void decreaseHp(int amount) {
+    public void nickHearts(int amount) {
         if (invulnerable) return;
         this.hp = Math.max(0, this.hp - amount);
     }
 
-    public void setHp(int hp) {
+    public void setHearts(int hp) {
         this.hp = hp;
     }
 }

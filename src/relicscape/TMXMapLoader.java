@@ -7,13 +7,6 @@ import java.util.ArrayList;
 import java.util.List;
 import javax.xml.parsers.DocumentBuilderFactory;
 import org.w3c.dom.*;
-
-/**
- * TMX loader: reads width/height, CSV layers, and external TSX tilesets.
- * - Collision layers: "collision" and "collision 2" -> set blocked cells
- * - First non-collision tile layer used as base visual layer (gids stored in World)
- * - Tilesets parsed to enable rendering (available via getTileImage)
- */
 public class TMXMapLoader {
 
     private final List<Tileset> tilesets = new ArrayList<>();
@@ -35,7 +28,6 @@ public class TMXMapLoader {
             int width = Integer.parseInt(map.getAttribute("width"));
             int height = Integer.parseInt(map.getAttribute("height"));
 
-            // Load tilesets (external TSX)
             NodeList tsNodes = map.getElementsByTagName("tileset");
             tilesets.clear();
             blackTilesets.clear();
@@ -44,7 +36,6 @@ public class TMXMapLoader {
                 int firstGid = Integer.parseInt(ts.getAttribute("firstgid"));
                 String source = ts.getAttribute("source");
                 if (source == null || source.isEmpty()) {
-                    // Inline tileset not supported in this minimal loader
                     continue;
                 }
                 loadTsx(firstGid, new File(baseDir, source).getAbsolutePath());
@@ -73,12 +64,10 @@ public class TMXMapLoader {
                         }
                     }
                 } else {
-                    // Store every non-collision tile layer for rendering
                     visualLayers.add(gids);
                 }
             }
 
-            // Also put the bottom-most visual layer into world's base indices for compatibility
             if (!visualLayers.isEmpty()) {
                 int[][] base = visualLayers.get(0);
                 for (int y = 0; y < height; y++) {
@@ -148,7 +137,6 @@ public class TMXMapLoader {
             int tileCount = parseIntOrDefault(root.getAttribute("tilecount"), columns);
             String tsName = root.getAttribute("name");
 
-            // image source relative to TSX directory
             NodeList imageNodes = root.getElementsByTagName("image");
             if (imageNodes.getLength() == 0) return;
             Element image = (Element) imageNodes.item(0);
@@ -158,13 +146,11 @@ public class TMXMapLoader {
             try {
                 tilesets.add(new Tileset(firstGid, imgPath, tileWidth, tileHeight, spacing, margin, columns));
             } catch (RuntimeException ex) {
-                // Special-case the 960x0 tileset: treat as black tiles if image missing
                 String fileName = new File(tsxPath).getName().toLowerCase();
                 String nameLower = tsName == null ? "" : tsName.toLowerCase();
                 if (fileName.startsWith("960x0") || nameLower.equals("960x0")) {
                     blackTilesets.add(new BlackTileset(firstGid, tileCount, tileWidth, tileHeight));
                 }
-                // Otherwise skip silently
             }
         } catch (Exception e) {
             throw new RuntimeException("Failed to load TSX: " + tsxPath + " - " + e.getMessage(), e);
@@ -177,7 +163,6 @@ public class TMXMapLoader {
         Element dataEl = (Element) dataNodes.item(0);
         String encoding = dataEl.getAttribute("encoding");
         if (encoding != null && !encoding.equalsIgnoreCase("csv")) {
-            // Only CSV supported in this minimal loader
             return null;
         }
         return dataEl.getTextContent().trim();

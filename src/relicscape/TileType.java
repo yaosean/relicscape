@@ -1,8 +1,5 @@
 package relicscape;
 
-/**
- * Types of tiles that make up the world.
- */
 public enum TileType {
     GRASS,
     TREE,
