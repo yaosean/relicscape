@@ -157,6 +157,11 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     private long hurtAnimStartMs = -1L;
     private final long hurtAnimDurationMs = 400L;
     private long deathAnimStartMs = -1L;
+    
+    private final List<EndingParticle> endingParticles = new ArrayList<>();
+    private boolean endingAnimStarted = false;
+    private long endingAnimStartMs = 0L;
+    private int playerAscensionY = 0;
 
     private final Timer timer;
 
@@ -238,6 +243,8 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         gameWon = false;
         postWinChoice = false;
         escapedWin = false;
+        endingAnimStarted = false;
+        endingParticles.clear();
 
         corruptionStartMs = -1L;
         corruptionTintActive = false;
@@ -668,6 +675,9 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         int py = player.getTileY();
         if(!mapLoader.hasTile("ending", px, py)) return;
         escapedWin = true;
+        endingAnimStarted = false;
+        endingParticles.clear();
+        escapedWinStartMs = System.currentTimeMillis();
         enterPostWinChoice("You step into the radiant rift. Press ENTER to begin a peaceful relic hunt or ESC to leave.");
     }
 
@@ -1203,26 +1213,37 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         float t = Math.min(1f, elapsed / 3200f);
         float pulse = (float)(0.6 + 0.4*Math.sin(elapsed/180.0));
 
-        // Radiant gradient backdrop
-        Color top = new Color(30, 10, 50, 240);
+        // Initialize particles on first frame
+        if(!endingAnimStarted){
+            endingAnimStarted = true;
+            endingAnimStartMs = System.currentTimeMillis();
+        }
+
+        // Radiant gradient backdrop with intensity pulse
+        float backdropIntensity = 0.8f + 0.2f * pulse;
+        Color top = new Color(30, 10, 50, (int)(240 * backdropIntensity));
         Color mid = new Color(90, 40, 140, 200);
         Color bot = new Color(10, 90, 120, 200);
         GradientPaint gp = new GradientPaint(0, 0, top, 0, h, bot, true);
         g2.setPaint(gp);
         g2.fillRect(0,0,w,h);
 
+        // Animated screen shake effect
+        int shakeOffsetX = (int)(Math.sin(elapsed / 120.0) * t * 12);
+        int shakeOffsetY = (int)(Math.cos(elapsed / 145.0) * t * 12);
+        
         // Concentric light rings
         g2.setColor(new Color(255, 230, 200, 80));
         for(int i=0;i<7;i++){
             int r = (int)(120 + i*46 + 12*Math.sin((elapsed/260.0)+i));
-            int cx = w/2;
-            int cy = h/2;
+            int cx = w/2 + shakeOffsetX;
+            int cy = h/2 + shakeOffsetY;
             g2.drawOval(cx - r, cy - r, r*2, r*2);
         }
 
-        // Star field sparkle
+        // Star field sparkle with more intensity
         java.util.Random randy = new java.util.Random(42);
-        g2.setColor(new Color(255, 245, 230, 160));
+        g2.setColor(new Color(255, 245, 230, (int)(160 * (0.8f + 0.2f * pulse))));
         for(int i=0;i<140;i++){
             int sx = randy.nextInt(w);
             int sy = randy.nextInt(h);
@@ -1230,19 +1251,73 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
             g2.fillRect(sx, sy, sz, sz);
         }
 
-        // Center glow
+        // Center glow with breathing effect
         int glowR = (int)(260 + 40*pulse);
-        g2.setColor(new Color(255, 240, 220, 120));
-        g2.fillOval(w/2 - glowR/2, h/2 - glowR/2, glowR, glowR);
-        g2.setColor(new Color(255, 255, 255, 200));
-        g2.fillOval(w/2 - glowR/4, h/2 - glowR/4, glowR/2, glowR/2);
+        g2.setColor(new Color(255, 240, 220, (int)(120 * pulse)));
+        g2.fillOval(w/2 - glowR/2 + shakeOffsetX, h/2 - glowR/2 + shakeOffsetY, glowR, glowR);
+        g2.setColor(new Color(255, 255, 255, (int)(200 * pulse)));
+        g2.fillOval(w/2 - glowR/4 + shakeOffsetX, h/2 - glowR/4 + shakeOffsetY, glowR/2, glowR/2);
+
+        // Character ascension animation
+        int charCenterX = w/2;
+        int charCenterY = (int)(h/2 - 50 * t * 3.5f); // Rise upward
+        float charScale = 0.8f + 0.3f * pulse;
+        float charAlpha = Math.max(0, 1f - t * 1.5f); // Fade near end
+        
+        // Render ascending character with glow trail
+        int charSize = 32;
+        int displayCharSize = (int)(charSize * charScale);
+        int charX = charCenterX - displayCharSize/2;
+        int charY = charCenterY - displayCharSize/2;
+        
+        // Character glow halo
+        g2.setColor(new Color(255, 200, 100, (int)(180 * charAlpha * pulse)));
+        int haloRadius = (int)(charSize/2 * 1.5f);
+        g2.fillOval(charX - haloRadius, charY - haloRadius, (haloRadius + displayCharSize/2)*2, (haloRadius + displayCharSize/2)*2);
+        
+        // Simple character representation (rectangle with color)
+        g2.setColor(new Color(200, 100, 255, (int)(255 * charAlpha)));
+        g2.fillRect(charX, charY, displayCharSize, displayCharSize);
+
+        // Particle burst effect
+        float particleAge = (System.currentTimeMillis() - endingAnimStartMs) / 1000f;
+        if(particleAge < 1.5f && endingParticles.isEmpty()){
+            // Create particles on first frame
+            java.util.Random prand = new java.util.Random();
+            for(int p = 0; p < 30; p++){
+                double angle = prand.nextDouble() * Math.PI * 2;
+                double speed = 80 + prand.nextDouble() * 200;
+                double vx = Math.cos(angle) * speed;
+                double vy = Math.sin(angle) * speed - 150;
+                Color[] colors = {
+                    new Color(255, 200, 100, 220),
+                    new Color(255, 255, 150, 220),
+                    new Color(200, 150, 255, 220),
+                    new Color(255, 150, 200, 220)
+                };
+                Color pcolor = colors[prand.nextInt(colors.length)];
+                endingParticles.add(new EndingParticle(charCenterX, charCenterY, vx, vy, 1.2f, 4 + prand.nextInt(5), pcolor));
+            }
+        }
+        
+        // Update and render particles
+        for(int i = endingParticles.size() - 1; i >= 0; i--){
+            EndingParticle p = endingParticles.get(i);
+            p.update(0.016f);
+            if(!p.isAlive()){
+                endingParticles.remove(i);
+            } else {
+                p.render(g2, 0, 0);
+            }
+        }
 
         // Text
         g2.setColor(new Color(255, 248, 240));
         g2.setFont(new Font("Garamond", Font.BOLD, 40));
         String title = "YOU ESCAPED WITH THE RELICS";
         int tw = g2.getFontMetrics().stringWidth(title);
-        g2.drawString(title, (w - tw)/2, h/2 - 40);
+        int titleY = (int)(h/2 - 40 + Math.sin(elapsed/250.0) * 8);
+        g2.drawString(title, (w - tw)/2, titleY);
 
         g2.setFont(new Font("Consolas", Font.PLAIN, 20));
         String line1 = "Light folds around you. The corruption dissolves.";
@@ -1255,7 +1330,8 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         g2.setFont(new Font("Garamond", Font.BOLD, 22));
         String prompt = "Press ESC to leave the restored world.";
         int pw = g2.getFontMetrics().stringWidth(prompt);
-        g2.drawString(prompt, (w - pw)/2, h - 60);
+        int promptY = h - 60 + (int)(Math.sin(elapsed/400.0) * 4);
+        g2.drawString(prompt, (w - pw)/2, promptY);
     }
 
     private void computeEndingBounds(){
@@ -2874,5 +2950,42 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
             return false;
         }
         return moodHaziness(worldX, worldY) >= corruptionEntryThreshold;
+    }
+
+    private static class EndingParticle {
+        double x, y, vx, vy;
+        float life;
+        float maxLife;
+        int size;
+        Color color;
+
+        EndingParticle(double x, double y, double vx, double vy, float maxLife, int size, Color color) {
+            this.x = x;
+            this.y = y;
+            this.vx = vx;
+            this.vy = vy;
+            this.life = maxLife;
+            this.maxLife = maxLife;
+            this.size = size;
+            this.color = color;
+        }
+
+        void update(float dt) {
+            x += vx * dt;
+            y += vy * dt;
+            vy += 60 * dt; // gravity
+            life -= dt;
+        }
+
+        void render(Graphics2D g, int screenX, int screenY) {
+            float alpha = Math.max(0, life / maxLife);
+            Color c = new Color(color.getRed(), color.getGreen(), color.getBlue(), (int)(color.getAlpha() * alpha));
+            g.setColor(c);
+            g.fillOval((int)x - size/2, (int)y - size/2, size, size);
+        }
+
+        boolean isAlive() {
+            return life > 0;
+        }
     }
 }
