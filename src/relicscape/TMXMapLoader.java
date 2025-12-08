@@ -17,6 +17,7 @@ public class TMXMapLoader {
     private final java.util.Map<String, int[][]> petLayers = new java.util.HashMap<>();
     private boolean[][] nopeGrid;
     private String homeNest = ".";
+    private int[][] baseVisualLayer;
 
     public World load(String tmxPath) {
         try {
@@ -54,6 +55,7 @@ public class TMXMapLoader {
                 paintLayers.clear();
                 petLayers.clear();
                 nopeGrid = null;
+                baseVisualLayer = null;
 
                 NodeList layers = map.getElementsByTagName("layer");
                 for (int i = 0; i < layers.getLength(); i++) {
@@ -84,6 +86,9 @@ public class TMXMapLoader {
                         }
                     } else {
                         paintLayers.add(gids);
+                        if (baseVisualLayer == null) {
+                            baseVisualLayer = gids;
+                        }
                         if(lname != null && !lname.isEmpty()){
                             petLayers.put(lname, gids);
                         }
@@ -129,6 +134,20 @@ public class TMXMapLoader {
     public int[][] getLayer(String name){
         if(name==null) return null;
         return petLayers.get(name.toLowerCase());
+    }
+
+    public void removeTileFromTilesetLayers(int x, int y) {
+        if(x < 0 || y < 0) return;
+        for(int[][] layer : paintLayers){
+            if(layer == null || layer == baseVisualLayer) continue;
+            if(y >= layer.length || x >= layer[0].length) continue;
+            layer[y][x] = 0;
+        }
+        for(int[][] layer : petLayers.values()){
+            if(layer == null || layer == baseVisualLayer) continue;
+            if(y >= layer.length || x >= layer[0].length) continue;
+            layer[y][x] = 0;
+        }
     }
 
     /** True if the named layer has a non-zero tile at (x,y). */

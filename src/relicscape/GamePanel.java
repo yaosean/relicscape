@@ -19,6 +19,9 @@ import java.util.Random;
 import javax.imageio.ImageIO;
 import javax.swing.JPanel;
 import javax.swing.Timer;
+import javax.swing.SwingUtilities;
+import java.util.Set;
+import java.util.HashSet;
 
 public class GamePanel extends JPanel implements KeyListener, MouseListener {
 
@@ -39,6 +42,13 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     private final Random rand = new Random(System.currentTimeMillis());
     private long lastMoveMs=0L;
     private static final long MOVE_GAP_MS = 200;
+    private static boolean bootIntoEndless = false;
+    private boolean endlessMode = false;
+    private boolean postWinChoice = false;
+    private boolean monstersHeal = false;
+    private boolean noCorruption = false;
+    private boolean noFog = false;
+    private int relicScatterMultiplier = 1;
         private static final String[] RELIC_RESOURCE_NAMES = {
             "book1.png",
             "book2.png",
@@ -55,6 +65,8 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         private Clip relic2Bgm;
         private Clip relic3Bgm;
         private Clip relic4Bgm;
+        private Clip victoryClip;
+        private Clip hurtClip;
         private long lastFootstepPlayMs = 0L;
         private final long footstepCooldownMs = 260L;
 
@@ -92,6 +104,17 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     private BufferedImage[] soldierDeathFrames;
     private final StartScreenRenderer startScreen;
     private final List<RelicDrop> looseShinies = new ArrayList<>();
+    private final Set<Long> unlockedRelicKeys = new HashSet<>();
+    private boolean mathActive = false;
+    private String mathQuestion = "";
+    private String mathAnswer = "";
+    private StringBuilder mathInput = new StringBuilder();
+    private int mathAttempts = 0;
+    private final int mathMaxAttempts = 3;
+    private long pendingRelicKey = -1L;
+    private int pendingRelicX = -1;
+    private int pendingRelicY = -1;
+    private boolean pendingLooseRelic = false;
     private enum MonsterType { EYE, JELLY, GOLEM, NECRO }
     private final List<Monster> monsters = new ArrayList<>();
     private BufferedImage[] monsterEyeFrames;
@@ -174,6 +197,10 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         }
         player = new Player(spawnX, spawnY, 100);
         wakeFog();
+
+        if(bootIntoEndless){
+            configureEndlessMode();
+        }
         loadPlayerLook();
         loadMonsterSprites();
         loadSounds();
@@ -190,6 +217,52 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         timer.start();
 
         lastMessage = "Explore the world. Find " + relicBag.goalCount() + " relic fragments and return to the central shrine.";
+        if(endlessMode){
+            lastMessage = "Peaceful run: collect countless relics, monsters heal, shrine restarts or ESC exits.";
+        }
+    }
+
+    private void configureEndlessMode(){
+        bootIntoEndless = false;
+        endlessMode = true;
+        monstersHeal = true;
+        noCorruption = true;
+        noFog = true;
+        relicScatterMultiplier = 4;
+
+        onStartScreen = false;
+        startFading = false;
+        fadeDone = false;
+        waitingForContinue = false;
+        gameOver = false;
+        gameWon = false;
+        postWinChoice = false;
+        escapedWin = false;
+
+        corruptionStartMs = -1L;
+        corruptionTintActive = false;
+        corruptionPhaseTwo = false;
+        corruptionExposureStartMs = -1L;
+        corruptionDamageRemainder = 0.0;
+        inCorruptionZone = false;
+
+        firstRelicCutsceneStarted = true;
+        firstRelicCutsceneActive = false;
+        firstRelicCutsceneAwaitingContinue = false;
+        firstRelicCutsceneDone = true;
+        secondRelicCutsceneActive = false;
+        secondRelicCutsceneAwaitingContinue = false;
+        secondRelicCutsceneDone = true;
+        thirdRelicCutsceneActive = false;
+        thirdRelicCutsceneAwaitingContinue = false;
+        thirdRelicCutsceneDone = true;
+        necroCutsceneActive = false;
+        necroCutsceneAwaitingContinue = false;
+        necroCutsceneDone = true;
+        nextMonsterSpawnMs = System.currentTimeMillis() + 300L;
+
+        wakeFog();
+        lastMessage = "Peaceful relic hunt: monsters heal you, corruption is gone. Shrine restarts the loop.";
     }
 
     @Override
@@ -216,6 +289,18 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
             } else if(!startFading){
                 beginStartFade();
             }
+            return;
+        }
+
+        if(postWinChoice){
+            handleWinChoiceKey(e);
+            repaint();
+            return;
+        }
+
+        if(mathActive){
+            handleMathKey(e);
+            repaint();
             return;
         }
 
@@ -279,6 +364,14 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         }
     }
 
+    private void handleWinChoiceKey(KeyEvent e){
+        if(e.getKeyCode() == KeyEvent.VK_ESCAPE){
+            System.exit(0);
+        } else if(e.getKeyCode() == KeyEvent.VK_ENTER){
+            restartIntoEndless();
+        }
+    }
+
     @Override
     public void mouseClicked(MouseEvent e) {
         if(thirdRelicCutsceneActive && thirdRelicCutsceneAwaitingContinue){
@@ -318,7 +411,10 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         if(firstRelicCutsceneActive || secondRelicCutsceneActive || thirdRelicCutsceneActive){
             return;
         }
-        if(gameOver){
+        if(mathActive){
+            return;
+        }
+        if(gameOver || postWinChoice || gameWon){
             return;
         }
         long now = System.currentTimeMillis();
@@ -357,24 +453,19 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
 
     private void feelTile(TileType tile) {
         if(tile==TileType.RELIC){
-            relicBag.stashOne();
-            playOnce(relicClip);
-            handleRelicMilestones();
-            stopClip(footstepClip);
-            world.setTile(player.getTileX(),player.getTileY(),world.baseForRow(player.getTileY()));
-            lastMessage="You found a relic fragment! ("+
-                    relicBag.bagCount()+"/"+relicBag.goalCount()+")";
-            if(!firstRelicCutsceneStarted){
-                triggerFirstRelicCutscene();
+            long key = encodePoint(player.getTileX(), player.getTileY());
+            if(unlockedRelicKeys.contains(key)){
+                lastMessage = "The relic's seal is already broken.";
+            } else if(mathActive){
+                lastMessage = "Finish the puzzle before touching another relic.";
+            } else {
+                startRelicMinigame(key, player.getTileX(), player.getTileY());
             }
-            startCorruptionIfReady();
-            maybeTriggerSecondCutscene();
-            maybeTriggerThirdCutscene();
-            maybeTriggerNecroCutscene();
         } else if(tile==TileType.SHRINE){
-            if(relicBag.doneGathering()){
-                gameWon=true;
-                lastMessage="Light erupts from the shrine as the land begins to heal.";
+            if(endlessMode){
+                enterPostWinChoice("The shrine hums—press ENTER to restart this calm run or ESC to leave.");
+            } else if(relicBag.doneGathering()){
+                enterPostWinChoice("Light erupts from the shrine. Press ENTER to begin a peaceful relic hunt or ESC to leave.");
             } else {
                 lastMessage="The shrine hums softly. It needs more relics.";
             }
@@ -383,7 +474,7 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         } else if(tile==TileType.RUBBLE){
             lastMessage="Broken stones crunch underfoot.";
         } else {
-            if(tileIsCorrupted(player.getTileX(), player.getTileY())){
+            if(!noCorruption && tileIsCorrupted(player.getTileX(), player.getTileY())){
                 lastMessage="The corruption crackles—get out now!";
             } else {
                 lastMessage="You move onward.";
@@ -412,7 +503,164 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         }
     }
 
+    private void enterPostWinChoice(String message){
+        gameWon = true;
+        postWinChoice = true;
+        lastMessage = message;
+        stopAllClips();
+        playOnce(victoryClip);
+    }
+
+    private long encodePoint(int x, int y) {
+        return ((long) x << 32) | (y & 0xFFFFFFFFL);
+    }
+
+    private void startRelicMinigame(long key, int x, int y){
+        pendingRelicKey = key;
+        pendingRelicX = x;
+        pendingRelicY = y;
+        stopClip(footstepClip);
+        if(mathActive){
+            return;
+        }
+        lastMessage = "Solve this math problem:";
+        startMathQuiz();
+    }
+
+    private void startMathQuiz(){
+        mathActive = true;
+        mathInput = new StringBuilder();
+        mathAttempts = 0;
+        generateMathProblem();
+    }
+
+    private void generateMathProblem(){
+        int a = rand.nextInt(16) + 5;
+        int b = rand.nextInt(16) + 5;
+        int c = rand.nextInt(5) + 2;
+        int d = rand.nextInt(10) + 3;
+
+        int part1 = a + b;
+        int part2 = part1 * c;
+        int part3 = Math.max(part2 - d, 1);
+
+        List<Integer> divisors = new ArrayList<>();
+        for(int i=1; i<=Math.sqrt(part3); i++){
+            if(part3 % i == 0){
+                divisors.add(i);
+                int pair = part3 / i;
+                if(pair != i) divisors.add(pair);
+            }
+        }
+        if(divisors.isEmpty()) divisors.add(1);
+        int e = divisors.get(rand.nextInt(divisors.size()));
+
+        int answer = part3 / e;
+        mathQuestion = "((" + a + " + " + b + ") * " + c + " - " + d + ") / " + e + " = ?";
+        mathAnswer = String.valueOf(answer);
+    }
+
+    private void handleMathKey(KeyEvent e){
+        int code = e.getKeyCode();
+        if(code == KeyEvent.VK_ESCAPE){
+            mathActive = false;
+            pendingRelicKey = -1L;
+            pendingRelicX = pendingRelicY = -1;
+            pendingLooseRelic = false;
+            lastMessage = "You step away from the relic's seal.";
+            return;
+        }
+        if(code == KeyEvent.VK_BACK_SPACE){
+            if(mathInput.length() > 0) mathInput.deleteCharAt(mathInput.length() - 1);
+            return;
+        }
+        if(code == KeyEvent.VK_ENTER){
+            if(mathInput.length() == 0) return;
+            mathAttempts++;
+            String guess = normalizeMathString(mathInput.toString());
+            String ans = normalizeMathString(mathAnswer);
+            if(guess.equals(ans)){
+                mathActive = false;
+                lastMessage = "Seal broken. The relic is yours.";
+                completeRelicUnlock();
+            } else if(mathAttempts >= mathMaxAttempts){
+                mathActive = false;
+                pendingRelicKey = -1L;
+                pendingRelicX = pendingRelicY = -1;
+                pendingLooseRelic = false;
+                lastMessage = "Seal holds. Answer was " + mathAnswer + ".";
+            } else {
+                lastMessage = "Incorrect. Attempts left: " + (mathMaxAttempts - mathAttempts);
+                mathInput = new StringBuilder();
+            }
+            return;
+        }
+        char c = e.getKeyChar();
+        if(isAllowedMathChar(c) && mathInput.length() < 32){
+            mathInput.append(c);
+        }
+    }
+
+    private void completeRelicUnlock(){
+        if(pendingLooseRelic){
+            for(int i=0;i<looseShinies.size();i++){
+                RelicDrop d = looseShinies.get(i);
+                if(d.x==pendingRelicX && d.y==pendingRelicY){
+                    looseShinies.remove(i);
+                    break;
+                }
+            }
+        } else {
+            unlockedRelicKeys.add(pendingRelicKey);
+        }
+        relicBag.stashOne();
+        playOnce(relicClip);
+        handleRelicMilestones();
+        stopClip(footstepClip);
+        world.setTile(pendingRelicX,pendingRelicY,world.baseForRow(pendingRelicY));
+        removeMapTileVisual(pendingRelicX, pendingRelicY);
+        lastMessage="You solved the puzzle and claimed the relic! ("+
+                relicBag.bagCount()+"/"+relicBag.goalCount()+")";
+        if(!endlessMode){
+            if(!firstRelicCutsceneStarted){
+                triggerFirstRelicCutscene();
+            }
+            startCorruptionIfReady();
+            maybeTriggerSecondCutscene();
+            maybeTriggerThirdCutscene();
+            maybeTriggerNecroCutscene();
+        }
+        pendingRelicKey = -1L;
+        pendingRelicX = -1;
+        pendingRelicY = -1;
+        pendingLooseRelic = false;
+    }
+
+    private void removeMapTileVisual(int x, int y){
+        if(mapLoader == null) return;
+        mapLoader.removeTileFromTilesetLayers(x, y);
+    }
+
+    private String normalizeMathString(String s){
+        String out = s.replaceAll("\\s+", "");
+        out = out.replace("*", "");
+        out = out.replaceAll("([0-9]+)\\^1", "$1");
+        out = out.replaceAll("x\\^1", "x");
+        out = out.replaceAll("X\\^1", "x");
+        out = out.replaceAll("([0-9]+)\\^0", "1");
+        out = out.replaceAll("x\\^0", "1");
+        out = out.replaceAll("X\\^0", "1");
+        out = out.replaceAll("\\+0", "");
+        return out.toLowerCase();
+    }
+
+    private boolean isAllowedMathChar(char c){
+        String allowed = "0123456789xX^+-*/() ";
+        return allowed.indexOf(c) >= 0;
+    }
+
     private void maybeTriggerEscape(){
+        if(endlessMode) return;
         if(gameOver || gameWon) return;
         if(mapLoader == null) return;
         if(!relicBag.doneGathering()) return;
@@ -420,11 +668,7 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         int py = player.getTileY();
         if(!mapLoader.hasTile("ending", px, py)) return;
         escapedWin = true;
-        gameWon = true;
-        escapedWinStartMs = System.currentTimeMillis();
-        stopClip(corruptionLoopClip);
-        playOnce(portalClip);
-        lastMessage = "You step into the radiant rift...";
+        enterPostWinChoice("You step into the radiant rift. Press ENTER to begin a peaceful relic hunt or ESC to leave.");
     }
 
     private void loadPlayerLook(){
@@ -443,27 +687,30 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         Random rand = new Random(System.currentTimeMillis());
         int[][] base = mapLoader.getLayer("tile layer 1");
 
-        for(BufferedImage pic : pics){
-            for(int tries=0; tries<4000; tries++){
-                int x = rand.nextInt(world.getWidth());
-                int y = rand.nextInt(world.getHeight());
+        int copies = Math.max(1, relicScatterMultiplier);
+        for(int copy=0; copy<copies; copy++){
+            for(BufferedImage pic : pics){
+                for(int tries=0; tries<4000; tries++){
+                    int x = rand.nextInt(world.getWidth());
+                    int y = rand.nextInt(world.getHeight());
 
-                if(base==null) continue; // require tile layer 1 present
-                if(y < 0 || y >= base.length || x < 0 || x >= base[0].length) continue;
-                if(base[y][x]==0) continue; // needs a painted tile
-                if(mapLoader.isNoSpawn(x,y)) continue;
-                if(world.isBlocked(x,y)) continue;
-                if(mapLoader.hasTile("walls", x, y)) continue;
-                if(mapLoader.hasTile("wall_vert", x, y)) continue;
-                if(mapLoader.hasTile("objects", x, y)) continue;
-                if(mapLoader.hasTile("extra", x, y)) continue;
-                if(x==player.getTileX() && y==player.getTileY()) continue;
+                    if(base==null) continue; // require tile layer 1 present
+                    if(y < 0 || y >= base.length || x < 0 || x >= base[0].length) continue;
+                    if(base[y][x]==0) continue; // needs a painted tile
+                    if(mapLoader.isNoSpawn(x,y)) continue;
+                    if(world.isBlocked(x,y)) continue;
+                    if(mapLoader.hasTile("walls", x, y)) continue;
+                    if(mapLoader.hasTile("wall_vert", x, y)) continue;
+                    if(mapLoader.hasTile("objects", x, y)) continue;
+                    if(mapLoader.hasTile("extra", x, y)) continue;
+                    if(x==player.getTileX() && y==player.getTileY()) continue;
 
-                if(tooCloseToOtherDrops(x,y,12)) continue;
-                if(Math.abs(x-player.getTileX()) + Math.abs(y-player.getTileY()) < 10) continue;
+                    if(tooCloseToOtherDrops(x,y,12)) continue;
+                    if(Math.abs(x-player.getTileX()) + Math.abs(y-player.getTileY()) < 10) continue;
 
-                looseShinies.add(new RelicDrop(x,y,pic));
-                break;
+                    looseShinies.add(new RelicDrop(x,y,pic));
+                    break;
+                }
             }
         }
     }
@@ -642,7 +889,7 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         }
 
         drawVignette(g2);
-        if(corruptionTintActive && !firstRelicCutsceneActive && !secondRelicCutsceneActive){
+        if(!noCorruption && corruptionTintActive && !firstRelicCutsceneActive && !secondRelicCutsceneActive){
             Color tint = corruptionPhaseTwo ? new Color(150,40,90,70) : new Color(90,60,130,40);
             g2.setColor(tint);
             g2.fillRect(0,0,getWidth(),getHeight());
@@ -665,10 +912,17 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
 
         g2.translate(-shakeX, -shakeY);
 
+        if(mathActive){
+            drawMathOverlay(g2);
+            return;
+        }
+
         if(gameOver){
             drawGameOverOverlay(g2);
         } else if(gameWon){
-            if(escapedWin){
+            if(postWinChoice){
+                drawWinChoiceOverlay(g2);
+            } else if(escapedWin){
                 drawEscapeWinOverlay(g2);
             } else {
                 drawGameOverOverlay(g2);
@@ -695,6 +949,23 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
 
     private void drawStartScreen(Graphics2D g2){
         startScreen.draw(g2, getWidth(), getHeight());
+    }
+
+    private void restartIntoEndless(){
+        postWinChoice = false;
+        stopAllClips();
+        if(timer != null){
+            timer.stop();
+        }
+        bootIntoEndless = true;
+        SwingUtilities.invokeLater(() -> {
+            java.awt.Window w = SwingUtilities.getWindowAncestor(this);
+            if(w != null){
+                w.dispose();
+            }
+            GameFrame gf = new GameFrame();
+            gf.setVisible(true);
+        });
     }
 
     private void drawFadeWords(Graphics2D g2, long elapsed, boolean hold){
@@ -809,6 +1080,66 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         shadePen.setComposite(oldInk);
     }
 
+    private void drawMathOverlay(Graphics2D g2) {
+        g2.setColor(new Color(0, 0, 0, 200));
+        g2.fillRect(0, 0, getWidth(), getHeight());
+
+        int boxW = 600;
+        int boxH = 120;
+        int boxX = getWidth() / 2 - boxW / 2;
+        int boxY = getHeight() / 2 - boxH / 2 - 50;
+
+        g2.setColor(new Color(50, 50, 50));
+        g2.fillRoundRect(boxX, boxY, boxW, boxH, 20, 20);
+        g2.setColor(Color.WHITE);
+        g2.drawRoundRect(boxX, boxY, boxW, boxH, 20, 20);
+
+        g2.setFont(new Font("Consolas", Font.BOLD, 18));
+        g2.setColor(Color.WHITE);
+        FontMetrics fmQ = g2.getFontMetrics();
+        g2.drawString(mathQuestion, boxX + 20, boxY + 30);
+
+        String inputStr = mathInput.toString();
+        g2.setColor(Color.YELLOW);
+        FontMetrics fmIn = g2.getFontMetrics();
+        g2.drawString(inputStr, boxX + 12, boxY + (boxH + fmIn.getAscent() - fmIn.getDescent()) / 2);
+
+        int kbHeight = drawMathKeyboard(g2, boxY + boxH + 20);
+
+        g2.setFont(new Font("Consolas", Font.PLAIN, 16));
+        g2.setColor(Color.WHITE);
+        String hint = "Type digits/symbols, Enter=submit, Backspace=erase, ESC=exit.";
+        int sw = g2.getFontMetrics().stringWidth(hint);
+        int hintY = boxY + boxH + kbHeight + 60;
+        g2.drawString(hint, getWidth() / 2 - sw / 2, hintY);
+    }
+
+    private int drawMathKeyboard(Graphics2D g2, int startY) {
+        String[] rows = {"1234567890", "xX^+-*/", "()"};
+        int keyW = 34, keyH = 38, gap = 6;
+        g2.setFont(new Font("Consolas", Font.BOLD, 16));
+        for (int r = 0; r < rows.length; r++) {
+            String row = rows[r];
+            int rowWidth = row.length() * (keyW + gap) - gap;
+            int x = getWidth() / 2 - rowWidth / 2;
+            int y = startY + r * (keyH + gap);
+            for (int c = 0; c < row.length(); c++) {
+                char ch = row.charAt(c);
+                int kx = x + c * (keyW + gap);
+                g2.setColor(new Color(35, 35, 35));
+                g2.fillRoundRect(kx, y, keyW, keyH, 6, 6);
+                g2.setColor(new Color(200, 200, 200));
+                g2.drawRoundRect(kx, y, keyW, keyH, 6, 6);
+                String s = String.valueOf(ch);
+                FontMetrics fm = g2.getFontMetrics();
+                int tx = kx + (keyW - fm.stringWidth(s)) / 2;
+                int ty = y + (keyH + fm.getAscent() - fm.getDescent()) / 2;
+                g2.drawString(s, tx, ty);
+            }
+        }
+        return rows.length * (keyH + gap) - gap;
+    }
+
     private void drawGameOverOverlay(Graphics2D overPen){
         String bigShout;
         if(gameWon){
@@ -836,9 +1167,33 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         overPen.drawString(bigShout, centerX, centerY);
 
         overPen.setFont(new Font("Consolas", Font.PLAIN, 16));
-        String lilNote = "Press ESC to quit.";
+        String lilNote = postWinChoice ? "ESC = quit, ENTER = restart peaceful run." : "Press ESC to quit.";
         int lilWide = overPen.getFontMetrics().stringWidth(lilNote);
         overPen.drawString(lilNote, getWidth()/2 - lilWide/2, centerY+30);
+    }
+
+    private void drawWinChoiceOverlay(Graphics2D g2){
+        int w = getWidth();
+        int h = getHeight();
+        g2.setColor(new Color(0, 0, 0, 205));
+        g2.fillRect(0,0,w,h);
+
+        g2.setFont(new Font("Consolas", Font.BOLD, 26));
+        String title = endlessMode ? "THE SHRINE IS STABLE" : "THE LAND IS HEALED";
+        FontMetrics fm = g2.getFontMetrics();
+        int tx = (w - fm.stringWidth(title))/2;
+        int ty = h/2 - fm.getHeight();
+        g2.setColor(new Color(230, 250, 255));
+        g2.drawString(title, tx, ty);
+
+        g2.setFont(new Font("Consolas", Font.PLAIN, 18));
+        String line1 = "ENTER = restart with many relics, no corruption, monsters heal you.";
+        String line2 = "ESC = exit the adventure.";
+        int l1x = (w - g2.getFontMetrics().stringWidth(line1))/2;
+        int l2x = (w - g2.getFontMetrics().stringWidth(line2))/2;
+        g2.setColor(new Color(210, 235, 240));
+        g2.drawString(line1, l1x, ty + 42);
+        g2.drawString(line2, l2x, ty + 72);
     }
 
     private void drawEscapeWinOverlay(Graphics2D g2){
@@ -1154,11 +1509,22 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
 
     private void wakeFog() {
         discovered = new boolean[world.getHeight()][world.getWidth()];
-        peelFog(player.getTileX(), player.getTileY());
+        if(noFog){
+            for(int y=0;y<discovered.length;y++){
+                for(int x=0;x<discovered[0].length;x++){
+                    discovered[y][x] = true;
+                }
+            }
+        } else {
+            peelFog(player.getTileX(), player.getTileY());
+        }
     }
 
     private void peelFog(int cx, int cy){
         if(discovered == null){
+            return;
+        }
+        if(noFog){
             return;
         }
 
@@ -1195,27 +1561,17 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         for(int i=0;i<looseShinies.size();i++){
             RelicDrop d = looseShinies.get(i);
             if(d.x==player.getTileX() && d.y==player.getTileY()){
-                looseShinies.remove(i);
-                relicBag.stashOne();
-                playOnce(relicClip);
-                handleRelicMilestones();
-                stopClip(footstepClip);
-                world.setTile(player.getTileX(),player.getTileY(),world.baseForRow(player.getTileY()));
-                lastMessage="You found a relic fragment! ("+
-                        relicBag.bagCount()+"/"+relicBag.goalCount()+")";
-                if(!firstRelicCutsceneStarted){
-                    triggerFirstRelicCutscene();
-                }
-                startCorruptionIfReady();
-                maybeTriggerSecondCutscene();
-                maybeTriggerThirdCutscene();
-                maybeTriggerNecroCutscene();
+                pendingLooseRelic = true;
+                pendingRelicX = player.getTileX();
+                pendingRelicY = player.getTileY();
+                startRelicMinigame(-1L, pendingRelicX, pendingRelicY);
                 return;
             }
         }
     }
 
     private void startCorruptionIfReady(){
+        if(noCorruption) return;
         if(corruptionStartMs >= 0L) return;
         if(relicBag.bagCount() >= 1){
             handleRelicMilestones();
@@ -1226,6 +1582,7 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     }
 
     private void maybeTriggerSecondCutscene(){
+        if(noCorruption) return;
         if(secondRelicCutsceneActive || secondRelicCutsceneDone) return;
         if(firstRelicCutsceneActive) return;
         if(relicBag.bagCount() >= 2){
@@ -1234,6 +1591,7 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     }
 
     private void maybeTriggerThirdCutscene(){
+        if(noCorruption) return;
         if(thirdRelicCutsceneActive || thirdRelicCutsceneDone) return;
         if(firstRelicCutsceneActive || secondRelicCutsceneActive) return;
         if(relicBag.bagCount() >= 3){
@@ -1242,6 +1600,7 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     }
 
     private void maybeTriggerNecroCutscene(){
+        if(noCorruption) return;
         if(necroCutsceneActive || necroCutsceneDone) return;
         if(firstRelicCutsceneActive || secondRelicCutsceneActive || thirdRelicCutsceneActive) return;
         if(relicBag.doneGathering()){
@@ -1274,6 +1633,8 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         relic2Bgm = loadClip("sounds/bgm/Dark_Pulsating_Ambient.wav");
         relic3Bgm = loadClip("sounds/bgm/Long_Distorted_Ambient.wav");
         relic4Bgm = loadClip("sounds/bgm/amnesia_the_dark_descent___brute_theme_extended.wav");
+        victoryClip = loadClip("sounds/victory_music___sound_effect_for_editing.wav");
+        hurtClip = loadClip("sounds/undertale_damage_sound_effect.wav");
 
         setClipGain(footstepClip, -6f); // half-ish volume
     }
@@ -1411,6 +1772,21 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         } catch(Exception ignored){ }
     }
 
+    private void stopAllClips(){
+        stopClip(footstepClip);
+        stopClip(preRelicBgm);
+        stopClip(relic1Bgm);
+        stopClip(relic2Bgm);
+        stopClip(relic3Bgm);
+        stopClip(relic4Bgm);
+        stopClip(corruptionLoopClip);
+        stopClip(deathClip);
+        stopClip(portalClip);
+        stopClip(relicClip);
+        stopClip(victoryClip);
+        stopClip(hurtClip);
+    }
+
     private void playFootstep(){
         long now = System.currentTimeMillis();
         lastFootstepPlayMs = now;
@@ -1418,6 +1794,10 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     }
 
     private void updateCorruptionLoop(){
+        if(noCorruption){
+            stopClip(corruptionLoopClip);
+            return;
+        }
         boolean shouldPlay = inCorruptionZone
                 && (System.currentTimeMillis() - lastMoveMs) < 400L
                 && !gameOver
@@ -1455,6 +1835,15 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     }
 
     private void handleRelicMilestones(){
+        if(endlessMode){
+            // In peaceful overworld, lock music to Restless_Melody_02 regardless of relic count
+            stopClip(relic1Bgm);
+            stopClip(relic2Bgm);
+            stopClip(relic3Bgm);
+            stopClip(relic4Bgm);
+            ensureLooping(preRelicBgm);
+            return;
+        }
         int count = relicBag.bagCount();
         if(count >= 4){
             switchBgm(relic3Bgm, relic4Bgm);
@@ -1471,7 +1860,13 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         if(onStartScreen){
             return;
         }
+        if(mathActive){
+            return;
+        }
         if(gameOver || gameWon){
+            if(gameWon && !postWinChoice && relicBag.doneGathering()){
+                enterPostWinChoice("The shrine beckons—press ENTER to begin a peaceful relic hunt or ESC to leave.");
+            }
             return;
         }
 
@@ -1517,8 +1912,10 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
             checkMonsterContacts();
         }
 
-        applyCorruptionDamage();
-        updateCorruptionLoop();
+        if(!noCorruption){
+            applyCorruptionDamage();
+            updateCorruptionLoop();
+        }
         updateFootstepLoop();
     }
 
@@ -2036,9 +2433,15 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
                 if(now - lastDamageMs >= damageCooldownMs){
                     lastDamageMs = now;
                     hurtAnimStartMs = now;
-                    player.takeDamage(30);
-                    lastMessage = "Necrotic blades rip through you!";
-                    checkIfDone();
+                    if(monstersHeal){
+                        healPlayer(24);
+                        lastMessage = "A violet spark mends your wounds.";
+                    } else {
+                        playOnce(hurtClip);
+                        player.takeDamage(30);
+                        lastMessage = "Necrotic blades rip through you!";
+                        checkIfDone();
+                    }
                 }
                 break;
             }
@@ -2052,22 +2455,35 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
                 if(now - lastDamageMs >= damageCooldownMs){
                     lastDamageMs = now;
                     hurtAnimStartMs = now;
-                    int dmg;
-                    if(m.type == MonsterType.GOLEM){
-                        dmg = 22;
-                    } else if(m.type == MonsterType.EYE || m.type == MonsterType.JELLY){
-                        dmg = 15;
+                    if(monstersHeal){
+                        healPlayer(14);
+                        lastMessage = "The creature shares its vitality.";
                     } else {
-                        dmg = 10;
+                        int dmg;
+                        if(m.type == MonsterType.GOLEM){
+                            dmg = 22;
+                        } else if(m.type == MonsterType.EYE || m.type == MonsterType.JELLY){
+                            dmg = 15;
+                        } else {
+                            dmg = 10;
+                        }
+                        playOnce(hurtClip);
+                        player.takeDamage(dmg);
+                        knockPlayerFrom(mx,my);
+                        lastMessage = "You are struck by a lurking horror!";
+                        checkIfDone();
                     }
-                    player.takeDamage(dmg);
-                    knockPlayerFrom(mx,my);
-                    lastMessage = "You are struck by a lurking horror!";
-                    checkIfDone();
                 }
                 break;
             }
         }
+    }
+
+    private void healPlayer(int amount){
+        if(player == null) return;
+        if(amount <= 0) return;
+        int healed = Math.min(player.getMaxHearts(), player.getHearts() + amount);
+        player.setHearts(healed);
     }
 
     private void knockPlayerFrom(int mx,int my){
@@ -2344,6 +2760,9 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     }
 
     private int fogAlphaForTile(int worldX, int worldY){
+        if(noFog){
+            return 0;
+        }
         if(!isDiscovered(worldX, worldY)){
             return 235;
         }
@@ -2366,6 +2785,9 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     }
 
     private double moodHaziness(int worldX,int worldY){
+        if(noCorruption){
+            return 0.0;
+        }
         if(corruptionStartMs < 0L){
             return 0.0;
         }
@@ -2384,6 +2806,9 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     }
 
     private void applyCorruptionDamage(){
+        if(noCorruption){
+            return;
+        }
         if(corruptionStartMs < 0L) return;
         if(player == null) return;
 
@@ -2445,6 +2870,9 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     }
 
     private boolean tileIsCorrupted(int worldX, int worldY){
+        if(noCorruption){
+            return false;
+        }
         return moodHaziness(worldX, worldY) >= corruptionEntryThreshold;
     }
 }
