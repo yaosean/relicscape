@@ -2,6 +2,7 @@ package relicscape;
 
 import java.awt.image.BufferedImage;
 import java.io.File;
+import java.io.InputStream;
 import javax.imageio.ImageIO;
 public class Tileset {
     public final int firstTid;
@@ -47,15 +48,35 @@ public class Tileset {
         Exception last = null;
         for (String cand : options) {
             try {
-                File f = new File(cand);
-                if (!f.exists()) continue;
-                BufferedImage imgGuess = ImageIO.read(f);
+                BufferedImage imgGuess = readFromClasspath(cand);
+                if (imgGuess != null) return imgGuess;
+                imgGuess = readFromFile(cand);
                 if (imgGuess != null) return imgGuess;
             } catch (Exception e) {
                 last = e;
             }
         }
         throw new RuntimeException("Couldn't read tileset image: " + imagePath, last);
+    }
+
+    private BufferedImage readFromClasspath(String path) {
+        String normalized = path.startsWith("/") ? path.substring(1) : path;
+        try (InputStream in = Tileset.class.getClassLoader().getResourceAsStream(normalized)) {
+            if (in != null) {
+                return ImageIO.read(in);
+            }
+        } catch (Exception ignored) { }
+        return null;
+    }
+
+    private BufferedImage readFromFile(String path) {
+        try {
+            File f = new File(path);
+            if (f.exists()) {
+                return ImageIO.read(f);
+            }
+        } catch (Exception ignored) { }
+        return null;
     }
 
     /**

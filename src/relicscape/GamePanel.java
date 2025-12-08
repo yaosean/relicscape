@@ -7,6 +7,12 @@ import java.awt.event.MouseEvent;
 import java.awt.event.MouseListener;
 import java.awt.image.BufferedImage;
 import java.io.File;
+import java.io.InputStream;
+import java.io.BufferedInputStream;
+import javax.sound.sampled.AudioInputStream;
+import javax.sound.sampled.AudioSystem;
+import javax.sound.sampled.Clip;
+import javax.sound.sampled.AudioFormat;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -33,6 +39,24 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     private final Random rand = new Random(System.currentTimeMillis());
     private long lastMoveMs=0L;
     private static final long MOVE_GAP_MS = 200;
+        private static final String[] RELIC_RESOURCE_NAMES = {
+            "book1.png",
+            "book2.png",
+            "book3.png",
+            "book4.png"
+        };
+        private Clip corruptionLoopClip;
+        private Clip deathClip;
+        private Clip portalClip;
+        private Clip relicClip;
+        private Clip footstepClip;
+        private Clip preRelicBgm;
+        private Clip relic1Bgm;
+        private Clip relic2Bgm;
+        private Clip relic3Bgm;
+        private Clip relic4Bgm;
+        private long lastFootstepPlayMs = 0L;
+        private final long footstepCooldownMs = 260L;
 
     private String lastMessage = "Explore the world. Find 3 relic fragments and return to the central shrine.";
     private boolean gameOver=false;
@@ -152,6 +176,8 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         wakeFog();
         loadPlayerLook();
         loadMonsterSprites();
+        loadSounds();
+        startPreRelicBgm();
         scatterRelicPics();
         syncRelicGoal();
 
@@ -315,6 +341,7 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         player.setPosition(newX, newY);
         lastMoveMs=now;
         moving=true;
+        playFootstep();
 
         if(dx!=0){
             facingRight = dx > 0;
@@ -331,6 +358,9 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     private void feelTile(TileType tile) {
         if(tile==TileType.RELIC){
             relicBag.stashOne();
+            playOnce(relicClip);
+            handleRelicMilestones();
+            stopClip(footstepClip);
             world.setTile(player.getTileX(),player.getTileY(),world.baseForRow(player.getTileY()));
             lastMessage="You found a relic fragment! ("+
                     relicBag.bagCount()+"/"+relicBag.goalCount()+")";
@@ -370,6 +400,8 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
             gameOver=true;
             lastMessage = "You collapse in the dust.";
             deathAnimStartMs = System.currentTimeMillis();
+            playOnce(deathClip);
+            stopClip(corruptionLoopClip);
             return;
         }
 
@@ -389,6 +421,8 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         escapedWin = true;
         gameWon = true;
         escapedWinStartMs = System.currentTimeMillis();
+        stopClip(corruptionLoopClip);
+        playOnce(portalClip);
         lastMessage = "You step into the radiant rift...";
     }
 
@@ -435,19 +469,11 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
 
     private List<BufferedImage> loadRelicPics(){
         List<BufferedImage> pics = new ArrayList<>();
-        File dir = new File("relics");
-        if(!dir.exists() || !dir.isDirectory()){
-            return pics;
-        }
-        File[] files = dir.listFiles((d,name)-> name.toLowerCase().endsWith(".png"));
-        if(files==null) return pics;
-        for(File f: files){
-            try{
-                BufferedImage img = ImageIO.read(f);
-                if(img!=null){
-                    pics.add(img);
-                }
-            }catch(Exception ignored){ }
+        for(String name : RELIC_RESOURCE_NAMES){
+            BufferedImage img = readImage("relics/" + name);
+            if(img != null){
+                pics.add(img);
+            }
         }
         return pics;
     }
@@ -471,7 +497,7 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
 
     private BufferedImage[] loadStrip(String path){
         try{
-            BufferedImage sheet = ImageIO.read(new File(path));
+            BufferedImage sheet = readImage(path);
             return sliceHorizontal(sheet);
         } catch(Exception ex){
             return null;
@@ -1162,6 +1188,9 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
             if(d.x==player.getTileX() && d.y==player.getTileY()){
                 looseShinies.remove(i);
                 relicBag.stashOne();
+                playOnce(relicClip);
+                handleRelicMilestones();
+                stopClip(footstepClip);
                 world.setTile(player.getTileX(),player.getTileY(),world.baseForRow(player.getTileY()));
                 lastMessage="You found a relic fragment! ("+
                         relicBag.bagCount()+"/"+relicBag.goalCount()+")";
@@ -1180,6 +1209,7 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     private void startCorruptionIfReady(){
         if(corruptionStartMs >= 0L) return;
         if(relicBag.bagCount() >= 1){
+            handleRelicMilestones();
             corruptionStartMs = System.currentTimeMillis();
             corruptionTintActive = true;
             lastMessage = "A creeping corruption spreads...";
@@ -1223,9 +1253,24 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         necroSpawnFrames = loadStripFixed("monsters/Necromancer/Spawn/spr_NecromancerSpawn_strip20.png", 20);
     }
 
+    private void loadSounds(){
+        corruptionLoopClip = loadClip("sounds/Corrupted Area Corruption Pit Loop - Sound Effect (HD).wav");
+        deathClip = loadClip("sounds/Death sound effect.wav");
+        portalClip = loadClip("sounds/Portal escape ending Sound Effect.wav");
+        relicClip = loadClip("sounds/relic unlock.wav");
+        footstepClip = loadClip("sounds/Footsteps Sound Effect.wav");
+        preRelicBgm = loadClip("sounds/bgm/Restless_Melody_02.wav");
+        relic1Bgm = loadClip("sounds/bgm/Dark_Ambient.wav");
+        relic2Bgm = loadClip("sounds/bgm/Dark_Pulsating_Ambient.wav");
+        relic3Bgm = loadClip("sounds/bgm/Long_Distorted_Ambient.wav");
+        relic4Bgm = loadClip("sounds/bgm/amnesia_the_dark_descent___brute_theme_extended.wav");
+
+        setClipGain(footstepClip, -6f); // half-ish volume
+    }
+
     private BufferedImage[] loadStripFixed(String path, int frames){
         try{
-            BufferedImage sheet = ImageIO.read(new File(path));
+            BufferedImage sheet = readImage(path);
             if(sheet==null || frames<=0) return null;
             int h = sheet.getHeight();
             int frameW = Math.max(1, sheet.getWidth()/frames);
@@ -1239,6 +1284,167 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
             return out;
         } catch(Exception ex){
             return null;
+        }
+    }
+
+    private BufferedImage readImage(String path){
+        String normalized = path.startsWith("/") ? path.substring(1) : path;
+        try(InputStream in = GamePanel.class.getClassLoader().getResourceAsStream(normalized)){
+            if(in != null){
+                return ImageIO.read(in);
+            }
+        } catch(Exception ignored){ }
+        try{
+            File f = new File(path);
+            if(f.exists()){
+                return ImageIO.read(f);
+            }
+            File alt = new File(normalized);
+            if(alt.exists()){
+                return ImageIO.read(alt);
+            }
+        } catch(Exception ignored){ }
+        return null;
+    }
+
+    private Clip loadClip(String path){
+        Clip clip = tryLoadClip(path);
+        if(clip == null && path.toLowerCase().endsWith(".mp3")){
+            String wavTwin = path.substring(0, path.length()-4) + ".wav";
+            clip = tryLoadClip(wavTwin);
+        }
+        return clip;
+    }
+
+    private Clip tryLoadClip(String path){
+        String normalized = path.startsWith("/") ? path.substring(1) : path;
+        AudioInputStream ais = null;
+        AudioInputStream pcmStream = null;
+        try{
+            InputStream raw = GamePanel.class.getClassLoader().getResourceAsStream(normalized);
+            if(raw != null){
+                ais = AudioSystem.getAudioInputStream(new BufferedInputStream(raw));
+            } else {
+                File f = new File(path);
+                if(!f.exists()){
+                    f = new File(normalized);
+                }
+                if(f.exists()){
+                    ais = AudioSystem.getAudioInputStream(f);
+                }
+            }
+            if(ais == null) return null;
+
+            AudioFormat base = ais.getFormat();
+            AudioFormat decoded = new AudioFormat(
+                    AudioFormat.Encoding.PCM_SIGNED,
+                    base.getSampleRate(),
+                    16,
+                    base.getChannels(),
+                    base.getChannels() * 2,
+                    base.getSampleRate(),
+                    false);
+
+            pcmStream = AudioSystem.getAudioInputStream(decoded, ais);
+            Clip c = AudioSystem.getClip();
+            c.open(pcmStream);
+            return c;
+        } catch(Exception ignored){
+            return null;
+        } finally {
+            if(pcmStream != null){ try{ pcmStream.close(); } catch(Exception ignored){} }
+            if(ais != null){ try{ ais.close(); } catch(Exception ignored){} }
+        }
+    }
+
+    private void setClipGain(Clip clip, float gainDb){
+        if(clip == null) return;
+        try{
+            javax.sound.sampled.FloatControl ctrl = (javax.sound.sampled.FloatControl) clip.getControl(javax.sound.sampled.FloatControl.Type.MASTER_GAIN);
+            float clamped = Math.max(ctrl.getMinimum(), Math.min(ctrl.getMaximum(), gainDb));
+            ctrl.setValue(clamped);
+        } catch(Exception ignored){ }
+    }
+
+    private void playOnce(Clip clip){
+        if(clip == null) return;
+        try{
+            clip.stop();
+            clip.setFramePosition(0);
+            clip.start();
+        } catch(Exception ignored){ }
+    }
+
+    private void ensureLooping(Clip clip){
+        if(clip == null) return;
+        try{
+            if(clip.isRunning()) return;
+            clip.setFramePosition(0);
+            clip.loop(Clip.LOOP_CONTINUOUSLY);
+        } catch(Exception ignored){ }
+    }
+
+    private void stopClip(Clip clip){
+        if(clip == null) return;
+        try{
+            clip.stop();
+            clip.setFramePosition(0);
+        } catch(Exception ignored){ }
+    }
+
+    private void playFootstep(){
+        long now = System.currentTimeMillis();
+        lastFootstepPlayMs = now;
+        ensureLooping(footstepClip);
+    }
+
+    private void updateCorruptionLoop(){
+        boolean shouldPlay = inCorruptionZone
+                && (System.currentTimeMillis() - lastMoveMs) < 400L
+                && !gameOver
+                && !gameWon;
+        if(shouldPlay){
+            ensureLooping(corruptionLoopClip);
+        } else {
+            stopClip(corruptionLoopClip);
+        }
+    }
+
+    private void updateFootstepLoop(){
+        boolean pausedForCutscene = onStartScreen || startFading || waitingForContinue
+                || firstRelicCutsceneActive || secondRelicCutsceneActive || thirdRelicCutsceneActive
+                || necroCutsceneActive || firstRelicCutsceneAwaitingContinue || secondRelicCutsceneAwaitingContinue
+                || thirdRelicCutsceneAwaitingContinue || necroCutsceneAwaitingContinue;
+        boolean shouldPlay = (System.currentTimeMillis() - lastMoveMs) < 350L
+                && !gameOver
+                && !gameWon
+                && !pausedForCutscene;
+        if(shouldPlay){
+            ensureLooping(footstepClip);
+        } else {
+            stopClip(footstepClip);
+        }
+    }
+
+    private void switchBgm(Clip current, Clip next){
+        if(current != null){
+            stopClip(current);
+        }
+        if(next != null){
+            ensureLooping(next);
+        }
+    }
+
+    private void handleRelicMilestones(){
+        int count = relicBag.bagCount();
+        if(count >= 4){
+            switchBgm(relic3Bgm, relic4Bgm);
+        } else if(count >= 3){
+            switchBgm(relic2Bgm, relic3Bgm);
+        } else if(count >= 2){
+            switchBgm(relic1Bgm, relic2Bgm);
+        } else if(count >= 1){
+            switchBgm(preRelicBgm, relic1Bgm);
         }
     }
 
@@ -1293,6 +1499,8 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         }
 
         applyCorruptionDamage();
+        updateCorruptionLoop();
+        updateFootstepLoop();
     }
 
     private void triggerFirstRelicCutscene(){
@@ -1332,6 +1540,7 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         corruptionPhaseTwo = true;
         lastMessage = "Something awakens... The corruption quickens!";
         spawnAwakeningWave();
+        switchBgm(relic1Bgm, relic2Bgm);
     }
 
     private void triggerThirdRelicCutscene(){
@@ -1350,6 +1559,7 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         player.setInvulnerable(false);
         lastMessage = "A stone golem emerges from the corruption.";
         spawnGolemHuntersNearPlayer(2);
+        switchBgm(relic2Bgm, relic3Bgm);
     }
 
     private void triggerNecroCutscene(){
@@ -1468,6 +1678,10 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
             if(isDiscovered(x,y)) return new Point(x,y);
         }
         return null;
+    }
+
+    private void startPreRelicBgm(){
+        ensureLooping(preRelicBgm);
     }
 
     private Point pickGolemSpotNearPlayer(int minR, int maxR, java.util.Set<String> disallow){
@@ -2153,9 +2367,6 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     private void applyCorruptionDamage(){
         if(corruptionStartMs < 0L) return;
         if(player == null) return;
-        if(player.getHearts() <= 0) return;
-        if(player.getTileX() < 0 || player.getTileY() < 0) return;
-        if(!world.inBounds(player.getTileX(), player.getTileY())) return;
 
         double purpleHeat = moodHaziness(player.getTileX(), player.getTileY());
         long scaryClock = System.currentTimeMillis();
