@@ -312,6 +312,8 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         }
 
         if(gameOver||gameWon){
+            handleDeathKey(e);
+            repaint();
             return;
         }
 
@@ -377,6 +379,29 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         } else if(e.getKeyCode() == KeyEvent.VK_ENTER){
             restartIntoEndless();
         }
+    }
+
+    private void handleDeathKey(KeyEvent e){
+        if(e.getKeyCode() == KeyEvent.VK_ESCAPE){
+            System.exit(0);
+        } else if(e.getKeyCode() == KeyEvent.VK_ENTER){
+            restartGame();
+        }
+    }
+
+    private void restartGame(){
+        stopAllClips();
+        if(timer != null){
+            timer.stop();
+        }
+        SwingUtilities.invokeLater(() -> {
+            java.awt.Window w = SwingUtilities.getWindowAncestor(this);
+            if(w != null){
+                w.dispose();
+            }
+            GameFrame gf = new GameFrame();
+            gf.setVisible(true);
+        });
     }
 
     @Override
@@ -1177,7 +1202,7 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         overPen.drawString(bigShout, centerX, centerY);
 
         overPen.setFont(new Font("Consolas", Font.PLAIN, 16));
-        String lilNote = postWinChoice ? "ESC = quit, ENTER = restart peaceful run." : "Press ESC to quit.";
+        String lilNote = postWinChoice ? "ESC = quit, ENTER = restart peaceful run." : "ESC = quit, ENTER = restart.";
         int lilWide = overPen.getFontMetrics().stringWidth(lilNote);
         overPen.drawString(lilNote, getWidth()/2 - lilWide/2, centerY+30);
     }
@@ -2989,3 +3014,4 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         }
     }
 }
+//uncle if u make it to the end, u a real one :)
