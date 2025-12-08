@@ -402,6 +402,7 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
             deathAnimStartMs = System.currentTimeMillis();
             playOnce(deathClip);
             stopClip(corruptionLoopClip);
+            lowerBackgroundMusicVolumeForDeath();
             return;
         }
 
@@ -815,6 +816,14 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
         } else {
             bigShout = "YOU FELL IN THE RUINS";
         }
+
+        long elapsed = deathAnimStartMs > 0 ? Math.max(0L, System.currentTimeMillis() - deathAnimStartMs) : 0L;
+        float t = Math.min(1f, elapsed / 2200f);
+        int red = Math.min(255, 140 + (int)(115 * t));
+        int green = (int)(20 * (1f - t));
+        int alpha = Math.min(255, 60 + (int)(190 * t));
+        overPen.setColor(new Color(red, Math.max(0, green), Math.max(0, green), alpha));
+        overPen.fillRect(0, 0, getWidth(), getHeight());
 
         overPen.setFont(new Font("Consolas",Font.BOLD,26));
         overPen.setColor(new Color(255,255,255,230));
@@ -1256,6 +1265,7 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
     private void loadSounds(){
         corruptionLoopClip = loadClip("sounds/Corrupted Area Corruption Pit Loop - Sound Effect (HD).wav");
         deathClip = loadClip("sounds/Death sound effect.wav");
+        setClipGain(deathClip, 6f);
         portalClip = loadClip("sounds/Portal escape ending Sound Effect.wav");
         relicClip = loadClip("sounds/relic unlock.wav");
         footstepClip = loadClip("sounds/Footsteps Sound Effect.wav");
@@ -1364,6 +1374,15 @@ public class GamePanel extends JPanel implements KeyListener, MouseListener {
             float clamped = Math.max(ctrl.getMinimum(), Math.min(ctrl.getMaximum(), gainDb));
             ctrl.setValue(clamped);
         } catch(Exception ignored){ }
+    }
+
+    private void lowerBackgroundMusicVolumeForDeath(){
+        float quietGain = -22f;
+        setClipGain(preRelicBgm, quietGain);
+        setClipGain(relic1Bgm, quietGain);
+        setClipGain(relic2Bgm, quietGain);
+        setClipGain(relic3Bgm, quietGain);
+        setClipGain(relic4Bgm, quietGain);
     }
 
     private void playOnce(Clip clip){

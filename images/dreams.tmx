@@ -6,7 +6,6 @@
  <tileset firstgid="577" source="TX Props.tsx"/>
  <tileset firstgid="833" source="TX Plant with Shadow.tsx"/>
  <tileset firstgid="1089" source="960x0.tsx"/>
- <tileset firstgid="1091" source="../../../Users/seanx/Downloads/960x0.tsx"/>
  <layer id="1" name="Tile Layer 1" width="50" height="50">
   <data encoding="csv">
 0,0,9,9,9,9,9,9,9,10,11,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
